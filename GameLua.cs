@@ -121,7 +121,7 @@ internal sealed class GameLua
     // Resolves ids[start .. start+count) in ONE Lua call and caches them (misses included, like Cfg). Returns how many
     // came back, or -1 when Lua isn't ready (nothing cached → asked again later). Event-driven (a prestage build tick),
     // so the chunk / readback allocation is fine.
-    public int CfgBatch(List<int> ids, int start, int count)
+    public int CfgBatch(IReadOnlyList<int> ids, int start, int count)
     {
         if (count <= 0) return 0;
         var sb = new System.Text.StringBuilder("rawset(_G,'__at_cfgs',nil) __atlas_cfgs(");

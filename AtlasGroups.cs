@@ -98,6 +98,15 @@ internal static class AtlasGroups
     // ── live entity classification (Auto-Gather-and-Interaction.md §2 + §Chest Finder) ────────────────────────────
     // Chests: CollectionTable.Type == 2, plus the Type-0 chest ids (never Type==2 alone). The three Wild subtypes are
     // keyed by config id, NOT by name: the CollectionTable name is in the client's language.
+    // The chest config ids that exist in CollectionTable (release_4.7 tables/CollectionTable.json: the IsChestId ranges
+    // + the Type-2 rows 52001–52018), for the loading-screen name warm-up (Plugin.Tick.cs TryWarmUp). A missing id is
+    // harmless (cached as "no row").
+    public static readonly int[] WarmChestIds =
+    {
+        40001, 52001, 52002, 52003, 52004, 52005, 52006, 52007, 52008, 52011, 52012, 52013, 52014, 52016, 52017, 52018,
+        120101, 120102, 120201, 120202, 120203, 130001, 130002, 130003, 130004, 130005, 130006, 130007,
+    };
+
     public static bool IsChestId(int cfg, int type) =>
         type == 2 || cfg == 52004 || cfg == 52005 || (cfg >= 52011 && cfg <= 52014) || (cfg >= 120101 && cfg <= 120203)
         || (cfg >= 130001 && cfg <= 130007) || cfg == 40001;

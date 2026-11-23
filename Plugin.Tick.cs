@@ -57,8 +57,31 @@ public sealed partial class Plugin
         return cs.Phase == GamePhase.World && cs.IsWorldActive && (cs.UiState & GameUIState.Loading) == 0;
     }
 
+    // Name warm-up (in-game 2026-11-23: "slice detail: name lookup of 1 config ids (first 52016) 8.2 ms" — a fixed
+    // first-use cost of the game's CollectionTable, not per id). Paid ONCE per session while the loading screen still
+    // covers it: plugin ticks only run while IsWorldActive, and the Loading bit is usually still up right after the
+    // scene is entered (Game-Phases-and-Tick-Gating.md §2 / effect-filter finding) — so this tick is the earliest a
+    // plugin can do it. If Lua isn't usable then, it runs on the first world-ready tick before any other Atlas work.
+    // Resolves every known chest config id in ONE call; the names stay cached for the session. Books use the server
+    // label (no table name), so they need no warm-up.
+    private bool _warmed;
+
+    private void TryWarmUp()
+    {
+        if (_warmed || !_services.Lua.Ready) return;
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        int n = _lua.CfgBatch(AtlasGroups.WarmChestIds, 0, AtlasGroups.WarmChestIds.Length);
+        if (n < 0) return;   // Lua not ready yet → the next tick
+        _warmed = true;
+        double ms = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        bool veiled = (_services.ClientState.UiState & GameUIState.Loading) != 0;
+        _services.Log.Info($"[Atlas] warm-up: table names ready ({n} ids) in {ms:F1} ms ({(veiled ? "loading screen" : "first world tick")})");
+    }
+
     private void FastTick()
     {
+        var cs = _services.ClientState;
+        if (!_warmed && cs.Phase == GamePhase.World && cs.IsWorldActive) TryWarmUp();
         if (!WorldReady()) { NoteWorldUnstable(); return; }
         long charId = 0;
         try { charId = _services.PlayerState.CharId; } catch { }
