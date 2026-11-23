@@ -73,7 +73,7 @@ public sealed partial class Plugin
         if (_scanner.HasPlayerPos)
         {
             var p = _scanner.PlayerPos;
-            _map.Tick(_scene, _fetchedOnce, p.y, _mask, _model, _scanner.Live, _opened, _services.Framework.TimeNow);
+            if (CharReady) _map.Tick(_scene, _fetchedOnce, p.y, _mask, _model, _scanner.Live, _opened, _services.Framework.TimeNow);
         }
     }
 
@@ -145,6 +145,7 @@ public sealed partial class Plugin
 
     private void RecomputeNearest()
     {
+        if (!CharReady) return;   // never list with another character's (or no) filter
         if (_scene <= 0 || !_scanner.HasPlayerPos) return;
         var p = _scanner.PlayerPos;
         _model.Recompute(p.x, p.y, p.z, _mask, _scanner.Live, _opened);

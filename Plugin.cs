@@ -47,8 +47,14 @@ public sealed partial class Plugin : IStellarPlugin
     private readonly GroundProbe   _ground;
 
     private bool _noticeSeen;         // the first-open notice was acknowledged ("Got it") — gates every report
-    private long _charId;
+    private long _charId;                            // 0 until this login's character is known (FastTick)
     private int  _mask = AtlasGroups.DefaultMask;   // SHOW chips, per character
+
+    // In-game 2026-11-23: right after a login the first map push (198 flags) and NEAREST used the PREVIOUS filter, because
+    // the mask of the last character stayed loaded until the new character id was read → a wrong list and a second
+    // ~100–200 ms map rebuild. Nothing filter-driven (NEAREST, map flags, not-here) runs before the character's own saved
+    // filter (or the new-user defaults) is loaded; logout resets the mask to the defaults.
+    private bool CharReady => _charId != 0;
 
     public Plugin(IPluginServices services)
     {
@@ -144,6 +150,7 @@ public sealed partial class Plugin : IStellarPlugin
         _map.OnLogout();
         _scene = 0;
         _charId = 0;
+        _mask = AtlasGroups.DefaultMask;
     }
 
     private void OnLanguageChanged()

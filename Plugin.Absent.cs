@@ -42,7 +42,7 @@ public sealed partial class Plugin
 
     private void TickAbsent()
     {
-        if (!WorldReady() || _scene <= 0 || !_scanner.Healthy || !_fetchedOnce) { NoteWorldUnstable(); return; }
+        if (!WorldReady() || _scene <= 0 || !_scanner.Healthy || !_fetchedOnce || !CharReady) { NoteWorldUnstable(); return; }
         var pl = _scanner.PlayerPos;
         float now = _services.Framework.TimeNow;
         UnhideSeenLive();
