@@ -89,6 +89,42 @@ internal sealed class OpenedStore
         Save();
     }
 
+    // "Live wins" (user-approved 2026-11-23): an opened chest seen live again is un-hidden.
+    public bool RemoveOpened(long uuid)
+    {
+        if (!_uuids.Remove(uuid)) return false;
+        _all.RemoveAll(e => e.Uuid == uuid);
+        _scene.RemoveAll(e => e.Uuid == uuid);
+        Version++;
+        Save();
+        return true;
+    }
+
+    // Not-here entries of the current scene within `radius` (x, z) of a live chest → removed; their point ids go to `removed`.
+    public void RemoveAbsentNear(float x, float z, float radius, List<long> removed)
+    {
+        int before = removed.Count;
+        for (int i = _absent.Count - 1; i >= 0; i--)
+        {
+            var e = _absent[i];
+            if (e.Scene != _sceneId) continue;
+            float dx = e.X - x, dz = e.Z - z;
+            if (dx * dx + dz * dz > radius * radius) continue;
+            _absent.RemoveAt(i);
+            _absentIds.Remove(e.Uuid);
+            removed.Add(e.Uuid);
+        }
+        if (removed.Count == before) return;
+        Version++;
+        Save();
+    }
+
+    public bool HasAbsentInScene()
+    {
+        foreach (var e in _absent) if (e.Scene == _sceneId) return true;
+        return false;
+    }
+
     private void Save()
     {
         var sb = new StringBuilder((_all.Count + _absent.Count) * 34);

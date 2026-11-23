@@ -18,7 +18,7 @@ namespace Stellar.Atlas;
 // nearest SHOWN point.
 public sealed partial class Plugin
 {
-    private const float ArriveRadius    = 3f;
+    private const float ArriveRadius    = EntityScanner.OpenedRadius;   // 3 m
     private const float SameRadius      = 5f;    // a live entity this close to a guided server point (same chip) = it
     private const float ArrivedKeepSecs = 60f;   // after arriving, an open within this window still advances the guide
     private const float FlashSeconds    = 2.5f;

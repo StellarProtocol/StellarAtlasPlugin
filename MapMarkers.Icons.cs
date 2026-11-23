@@ -96,13 +96,19 @@ internal sealed partial class MapMarkers
         _mini.Reset(n);
     }
 
-    // Hide these committed entries in place (no map rebuild); their cached units are re-checked at once.
+    // The committed entries hidden in place are EXACTLY `ns` (no map rebuild): newly hidden ones go transparent, ones
+    // un-hidden since ("seen live again") come back; changed entries are re-checked at once.
+    private readonly HashSet<long> _suppressSet = new();
+
     private void SuppressIcons(List<long> ns)
     {
-        foreach (long n in ns)
+        _suppressSet.Clear();
+        foreach (long n in ns) _suppressSet.Add(n);
+        for (int i = 0; i < _ns.Length; i++)
         {
-            if (!_nIndex.TryGetValue(n, out int i) || _suppressed[i]) continue;
-            _suppressed[i] = true;
+            bool want = _suppressSet.Contains(_ns[i]);
+            if (want == _suppressed[i]) continue;
+            _suppressed[i] = want;
             _big.Cache[i] = null; _mini.Cache[i] = null;
             _big.RetryAt[i] = 0; _mini.RetryAt[i] = 0;
         }

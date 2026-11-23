@@ -217,9 +217,10 @@ internal sealed partial class MapMarkers
         if (now - _lastDispatchAt < DispatchGap) return;
         Select(scene, py, mask, model, live, opened);
         if (_jobSig == _lastSig) { _job.Clear(); return; }
-        if (_jobSigAll == _lastSigAll)
+        if (_jobSigAll == _lastSigAll && AllCommitted(_job))
         {
-            // only hides changed → hide those units in place; rebuild only once a minute for this alone
+            // only hides changed (nothing un-hidden that the maps don't already have) → hide / show those units in place;
+            // rebuild only once a minute for this alone. An un-hide of a point dropped by an earlier push is a real change.
             SuppressIcons(_jobHidden);
             if (now - _lastDispatchAt < HideDispatchGap) { _job.Clear(); return; }
         }
@@ -337,6 +338,12 @@ internal sealed partial class MapMarkers
         }
         _jobSig = sig ^ (ulong)scene;
         _jobSigAll = sigAll ^ (ulong)scene;
+    }
+
+    private bool AllCommitted(List<Entry> job)
+    {
+        foreach (var e in job) if (!_nIndex.ContainsKey(e.N)) return false;
+        return true;
     }
 
     private string ChipName(Chip c) => _loc.T(AtlasGroups.LabelKey(c));

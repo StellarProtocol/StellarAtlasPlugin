@@ -59,7 +59,7 @@ public sealed partial class Plugin
 
     private void FastTick()
     {
-        if (!WorldReady()) return;
+        if (!WorldReady()) { NoteWorldUnstable(); return; }
         long charId = 0;
         try { charId = _services.PlayerState.CharId; } catch { }
         if (charId != 0 && charId != _charId) OnCharacter(charId);
@@ -107,6 +107,7 @@ public sealed partial class Plugin
         if (SharingActive) _reports.Tick(force: true);   // flush the old scene's finds now
         StopGuide(clearMarker: true);                     // a guide never survives a scene change
         _groundCache.Clear();
+        NoteWorldUnstable();
         _scene = scene;
         _scanner.Reset();
         _model.Clear();

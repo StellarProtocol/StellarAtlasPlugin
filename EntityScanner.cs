@@ -29,8 +29,9 @@ internal sealed class LiveEnt
 // LiveEnt per NEWLY seen entity (an event).
 //
 // Opened detection (validated 2026-11-23): opening a chest flips AttrObjState 0→1, then the server stops sending that
-// chest to this character (it disappears at ~0.5 m and never comes back, any line, after relog). So "objState flipped
-// AND it vanished while the player stood within OpenedRadius" = opened by this character.
+// chest to this character (it disappears and never comes back, any line, after relog). So "objState flipped while seen
+// AND it later vanished" = opened by this character — at ANY distance (user-approved 2026-11-23); a scene change or
+// logout empties the walk through Reset(), which never reports opens. OpenedRadius is only used by the guide.
 internal sealed partial class EntityScanner
 {
     private const int   EntCollection = 16;     // EEntityType.EntCollection — (uuid >> 6) & 31, NEVER uuid & 0xFFFF
@@ -134,7 +135,7 @@ internal sealed partial class EntityScanner
                 var e = _live[u];
                 _live.Remove(u);
                 if (!e.Tracked) continue;
-                if (e.Flipped && AtlasGroups.IsChest(e.Chip) && e.Dist >= 0f && e.Dist <= OpenedRadius) Opened?.Invoke(e);
+                if (e.Flipped && AtlasGroups.IsChest(e.Chip)) Opened?.Invoke(e);
             }
             _gone.Clear();
             GoodPolls++;
