@@ -34,7 +34,7 @@ namespace Stellar.Atlas;
 // HideDispatchGap seconds.
 //
 // Ids: Id = 90000000000000 + scene × 1e9 + n (14 digits for scene < 10000; the KB recipe used 9e14 = 15 digits; the
-// scene term keeps two staged scenes' points apart — MapMarkers.OtherScenes.cs). The unit is named
+// scene term keeps the staged scenes' points apart — MapMarkers.Prestage.cs). The unit is named
 // "positionFlagName" .. data.Id by Lua string concat (map_flags_comp.lua:398), and Lua 5.1/LuaJIT formats numbers with
 // %.14g — a 15-digit id would come out as "9e+14" for EVERY point. 14 digits print exactly, so C# can rebuild the unit
 // name for the icon pass. n = the server point id (stable), or 600000000 + a per-session counter for a live-only entity.
@@ -45,7 +45,6 @@ internal sealed partial class MapMarkers
     private const int   MapCapBrowsed  = 500;    // another map browsed on the big map (never on the minimap)
     private const float FilterHold     = 1.2f;   // a chip toggle waits this long (restarted per toggle) → one rebuild per burst
     private const int   BatchSize      = 25;
-    private const int   BatchesPerTick = 1;
     private const float SelectGap      = 2f;     // re-check the set (cheap, no Lua) this often
     private const float DispatchGap    = 5f;     // at most one map rebuild per 5 s
     private const float HideDispatchGap = 60f;   // …and one per minute when only hides changed
@@ -93,8 +92,11 @@ internal sealed partial class MapMarkers
         " rawset(_G,'__atlas_mdrop',function(sid)" +
         " local m = rawget(_G,'__atlas_map') if m ~= nil then m[sid] = nil end" +
         " end)" +
-        " rawset(_G,'__atlas_mclear',function(cur)" +
-        " rawset(_G,'__atlas_map', {}) rawset(_G,'__atlas_cur', cur) rawset(_G,'__atlas_other', nil)" +
+        " rawset(_G,'__atlas_msetcur',function(cur)" +
+        " rawset(_G,'__atlas_cur', cur) rawset(_G,'__atlas_other', nil)" +
+        " end)" +
+        " rawset(_G,'__atlas_mreset',function()" +
+        " rawset(_G,'__atlas_map', {}) rawset(_G,'__atlas_other', nil)" +
         " end)" +
         " rawset(_G,'__atlas_mdispatch',function()" +
         " pcall(function() Z.EventMgr:Dispatch(Z.ConstValue.MapFlagShowListChanged) end)" +
@@ -124,7 +126,8 @@ internal sealed partial class MapMarkers
     private readonly AtlasClient _client;
     private bool _defined, _installed;
     private int _curScene;
-    private bool _needClear = true;   // (re)set __atlas_cur + empty the Lua table before the first push of a scene
+    private bool _needSetCur = true;  // tell the wrapper the current scene (it records requests for OTHER scenes)
+    private bool _needReset = true;   // empty the Lua table once per login (a surviving Lua state may hold old data)
 
     // selection scratch (grown on demand, reused — no allocation per sync once warm)
     private long[] _keys = new long[256];
@@ -191,19 +194,23 @@ internal sealed partial class MapMarkers
         _installRetryAt = 0f;
         _sticky.Clear();
         _jobPos = -1; _lastSig = _lastSigAll = 0; _dispatchPending = false;
-        _extraOrder.Clear(); _otherWanted = 0; _otherPoints = null; _otherLoading = 0;
-        _needClear = true;
+        _needSetCur = _needReset = true;
+        ResetPrestage();
         ResetIcons();
     }
 
-    // Scene change: drop what is shown; the next Sync pushes the new scene once its points arrive.
-    public void OnScene()
+    // Scene change: keep every staged scene (that is the point — MapMarkers.Prestage.cs); adopt the new scene's staged
+    // set so Select sees no change, or fall back to fetch + one dispatch.
+    public void OnScene(int scene, float now)
     {
+        if (_jobPos >= 0 && _jobExtra) Enqueue(_jobScene);   // a prestage push cut short → redo it later
         _sticky.Clear();
-        _jobPos = -1; _lastSig = _lastSigAll = 0; _dispatchPending = false;
-        _extraOrder.Clear(); _otherWanted = 0; _otherPoints = null; _otherLoading = 0;
-        _needClear = true;   // the Lua side (every staged scene) is emptied on the next tick
+        _jobPos = -1; _dispatchPending = false;
+        _needSetCur = true;
         ResetIcons();
+        _viewedScene = 0;
+        _curScene = scene;
+        if (scene > 0) AdoptScene(scene, now);
     }
 
     // Dispose: give the game its function back and remove our flags from both maps.
@@ -222,6 +229,7 @@ internal sealed partial class MapMarkers
     {
         if (scene <= 0) return;
         _curScene = scene;
+        _curMask = mask;
         _modelRef = model; _openedRef = opened;
         // Hitch fix (2026-11-23, [Hitch] stellar.atlas=137.5 ms once after the first push): every Lua step gets its own
         // tick — define/install, each batch, the commit, and the map refresh dispatch — and each is timed (Slow()).
@@ -230,40 +238,48 @@ internal sealed partial class MapMarkers
         if (_dispatchPending) { Dispatch(); return; }
         if (_jobPos >= 0) { PushStep(); return; }
         if (!EnsureInstalled(now) || _installedThisTick) return;   // install (prewarm) on its own tick, ahead of any push
-        if (_needClear)
+        if (_needReset) { if (Call("__atlas_mreset()")) _needReset = false; return; }
+        if (_needSetCur)
         {
-            if (Call("__atlas_mclear(" + scene.ToString(CultureInfo.InvariantCulture) + ")")) _needClear = false;
+            if (Call("__atlas_msetcur(" + scene.ToString(CultureInfo.InvariantCulture) + ")")) _needSetCur = false;
             return;
         }
-        if (TickOther(now, mask)) return;   // another map browsed on the big map (MapMarkers.OtherScenes.cs)
-        if (!dataReady || now - _lastSelectAt < SelectGap || now < _filterHoldUntil) return;
+        // The current scene first (Select); when it has nothing to do this tick, the other scenes are prestaged.
+        if (!TickCurrent(scene, dataReady, py, mask, model, live, opened, now)) TickPrestage(now, mask);
+    }
+
+    private bool TickCurrent(int scene, bool dataReady, float py, int mask, NearestModel model, Dictionary<long, LiveEnt> live,
+        OpenedStore opened, float now)
+    {
+        if (!dataReady || now - _lastSelectAt < SelectGap || now < _filterHoldUntil) return false;
         // Re-selected every SelectGap (one pass over the scene's points + a sort of a few thousand longs, sub-ms, no
         // Lua); pushed only when the set (ids + chips) changed AND the last map rebuild is ≥ DispatchGap ago — changes
         // inside the gap are picked up by a later select (coalesced).
         _lastSelectAt = now;
-        if (now - _lastDispatchAt < DispatchGap) return;
+        if (now - _lastDispatchAt < DispatchGap) return false;
         Select(scene, py, mask, model, live, opened);
-        if (_jobSig == _lastSig) { _job.Clear(); return; }
+        if (_jobSig == _lastSig) { _job.Clear(); return false; }
         // Nothing to show and nothing of ours on the maps (e.g. every chip off — the new-character default): leave the
         // game's maps untouched, no push and no rebuild. If flags were pushed earlier, the empty set goes out once to clear.
         if (_job.Count == 0 && CurCommittedCount() == 0)
         {
             _lastSig = _jobSig; _lastSigAll = _jobSigAll;
-            return;
+            return false;
         }
         if (_jobSigAll == _lastSigAll && AllCommitted(_job))
         {
             // only hides changed (nothing un-hidden that the maps don't already have) → hide / show those units in place;
             // rebuild only once a minute for this alone. An un-hide of a point dropped by an earlier push is a real change.
             SuppressIcons(_jobHidden);
-            if (now - _lastDispatchAt < HideDispatchGap) { _job.Clear(); return; }
+            if (now - _lastDispatchAt < HideDispatchGap) { _job.Clear(); return false; }
         }
         _jobScene = scene;
         _jobExtra = false;
         _jobPos = 0;
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-        if (!Call("__atlas_mstage()")) { _jobPos = -1; return; }
+        if (!Call("__atlas_mstage()")) { _jobPos = -1; return true; }
         Slow("select + stage", t0);
+        return true;
     }
 
     // The game rebuilds BOTH maps' flag lists synchronously inside this Dispatch (RefreshMap → our wrapper → ~MapCap
@@ -280,7 +296,8 @@ internal sealed partial class MapMarkers
     private void PushStep()
     {
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-        for (int b = 0; b < BatchesPerTick && _jobPos < _job.Count; b++)
+        // as many 25-point batches as fit in StageBudgetMs (at least one) — prestaging dozens of scenes stays smooth
+        for (int b = 0; _jobPos < _job.Count && (b == 0 || ElapsedMs(t0) < StageBudgetMs); b++)
         {
             var sb = _sb.Clear().Append("__atlas_mpush(");
             int end = Math.Min(_job.Count, _jobPos + BatchSize);
@@ -300,11 +317,12 @@ internal sealed partial class MapMarkers
         Slow("push batch", t0);
         if (_jobPos < _job.Count) return;
         Call("__atlas_mcommit(" + _jobScene.ToString(CultureInfo.InvariantCulture) + ")");
-        _dispatchPending = true;
         _jobPos = -1;
-        if (_jobExtra) { CommittedOther(_jobScene, _job.Count); return; }
+        if (_jobExtra) { if (CommittedStaged(_jobScene)) _dispatchPending = true; return; }   // silent unless on screen
+        _dispatchPending = true;
         _lastSig = _jobSig;
         _lastSigAll = _jobSigAll;
+        CommittedCurrent(_jobScene);
         CommitIcons(_jobScene, _job, extra: false);   // MapMarkers.Icons.cs: unit names + chips the icon pass looks for
     }
 

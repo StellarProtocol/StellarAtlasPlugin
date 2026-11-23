@@ -111,7 +111,7 @@ public sealed partial class Plugin
         _scene = scene;
         _scanner.Reset();
         _model.Clear();
-        _map.OnScene();
+        _map.OnScene(scene, _services.Framework.TimeNow);
         _opened.SetScene(scene);
         _fetchState = AtlasClient.FetchState.NoData;
         _fetchedOnce = false;

@@ -164,15 +164,15 @@ internal sealed partial class MapMarkers
     // Every plugin tick (world-ready): one Lua number read; a pass only during a burst after a rebuild.
     public void FrameTick(float now)
     {
-        if (!_installed || _paths.Length == 0) return;
+        if (!_installed) return;   // NOT gated on our own flags: a browse must be noticed even when this scene has none
         if (Lua.TryReadGlobalNumber("__atlas_mapgen", out double gen) && gen != _mapGen)
         {
             _mapGen = gen;
             _big.Invalidate(); _mini.Invalidate();   // units were reassigned → look every Id up again by name
-            _burst = BurstTicks;
-            NoteOtherRequest();   // the big map may have asked for another map (MapMarkers.OtherScenes.cs)
+            NoteOtherRequest();   // the big map may have asked for another map (MapMarkers.Prestage.cs)
+            if (_paths.Length > 0) _burst = BurstTicks;
         }
-        if (_burst <= 0) return;
+        if (_burst <= 0 || _paths.Length == 0) return;
         _burst--;
         RunPass(now);
     }
@@ -193,8 +193,8 @@ internal sealed partial class MapMarkers
         {
             var big = GameObject.Find(BigRootPath);   // null while the big map is closed (Find skips inactive objects)
             if (big != null) Pass(big.transform, _big, t0, mini: false);
-            // big map closed → the other maps it browsed are dropped (no rebuild: the minimap never showed them)
-            if (_bigWasOpen && big == null && _extraOrder.Count > 0) DropAllExtras();
+            // big map closed → stop re-skinning the scene it browsed (its data stays staged)
+            if (_bigWasOpen && big == null) BigMapClosed();
             _bigWasOpen = big != null;
             var mini = MiniRoot(now);
             if (mini != null) Pass(mini, _mini, t0, mini: true);
@@ -247,6 +247,7 @@ internal sealed partial class MapMarkers
             if (img == null) { st.RetryAt[i] = _pass + MissBackoff; continue; }
             if (!hide && sprite == null && !_tintFallback) NoTileOnce(chip, i);
             Apply(img, sprite, chip, hide);
+            if (!_bigOnly[i] && _sceneChangeAt >= 0f) NoteShown(_services.Framework.TimeNow);
         }
     }
 

@@ -78,16 +78,30 @@ internal sealed partial class AtlasClient : IDisposable
     }
 
     // ── points ────────────────────────────────────────────────────────────────────────────────────────────────────
-    public void FetchScene(int scene, Action<FetchResult> onMain)
+    public void FetchScene(int scene, Action<FetchResult> onMain) => LoadScene(scene, -1, true, onMain);
+
+    // Prestaging (MapMarkers.Prestage.cs): `indexVersion` = the scene's version in the /v1/scenes index (-1 = unknown →
+    // always ask the server). The cached copy is used WITHOUT a request when its version equals the index's; a scene
+    // with no cached copy is fetched only when `fetchWithoutCache` (a first visit / browse), never at login.
+    public void LoadScene(int scene, long indexVersion, bool fetchWithoutCache, Action<FetchResult> onMain)
     {
         _ = Task.Run(async () =>
         {
-            var res = await FetchSceneWorker(scene).ConfigureAwait(false);
+            var res = await FetchSceneWorker(scene, indexVersion, fetchWithoutCache).ConfigureAwait(false);
             if (!_disposed) _services.Framework.Post(() => onMain(res));
         });
     }
 
-    private async Task<FetchResult> FetchSceneWorker(int scene)
+    // Etag "s<scene>-v<version>" (StellarAtlasServer read.go sceneETag) → version, or -1.
+    private static long EtagVersion(string etag)
+    {
+        int v = etag.LastIndexOf("-v", StringComparison.Ordinal);
+        if (v < 0) return -1;
+        var digits = etag.Substring(v + 2).Trim('"');
+        return long.TryParse(digits, NumberStyles.Integer, CultureInfo.InvariantCulture, out long r) ? r : -1;
+    }
+
+    private async Task<FetchResult> FetchSceneWorker(int scene, long indexVersion, bool fetchWithoutCache)
     {
         var res = new FetchResult { Scene = scene, State = FetchState.NoData };
         string name = CachePrefix + scene.ToString(CultureInfo.InvariantCulture);
@@ -103,6 +117,10 @@ internal sealed partial class AtlasClient : IDisposable
                 if (parts.Length > 1) long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out fetched);
             }
         }
+
+        if (cached != null && indexVersion >= 0 && EtagVersion(etag) == indexVersion)
+            return Fill(res, cached, FetchState.Synced, fetched);   // the index says the copy is current → no request
+        if (cached == null && !fetchWithoutCache) return res;     // not visited yet → fetched on the first visit only
 
         if (HasKey)
         {
@@ -143,6 +161,62 @@ internal sealed partial class AtlasClient : IDisposable
             finally { _gate.Release(); }
         }
         return cached != null ? Fill(res, cached, FetchState.Offline, fetched) : res;
+    }
+
+    // GET /v1/scenes → scene id → version, only scenes with points (n > 0), plus the scenes cached on disk — both read
+    // off the main thread. The index is null when unreachable (prestaging then uses the cached scenes, unversioned).
+    public void FetchIndex(Action<System.Collections.Generic.Dictionary<int, long>?, System.Collections.Generic.List<int>> onMain)
+    {
+        _ = Task.Run(async () =>
+        {
+            System.Collections.Generic.Dictionary<int, long>? map = null;
+            if (HasKey)
+            {
+                await _gate.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    using var req = new HttpRequestMessage(HttpMethod.Get, BaseUrl + "/v1/scenes");
+                    req.Headers.TryAddWithoutValidation(HeaderClientKey, ClientKey);
+                    using var resp = await _http.SendAsync(req).ConfigureAwait(false);
+                    if (resp.IsSuccessStatusCode)
+                    {
+                        var body = await resp.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+                        using var doc = System.Text.Json.JsonDocument.Parse(body);
+                        if (doc.RootElement.TryGetProperty("scenes", out var arr) && arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+                        {
+                            map = new System.Collections.Generic.Dictionary<int, long>();
+                            foreach (var e in arr.EnumerateArray())
+                            {
+                                if (!e.TryGetProperty("id", out var id) || !e.TryGetProperty("v", out var v)) continue;
+                                if (e.TryGetProperty("n", out var n) && n.ValueKind == System.Text.Json.JsonValueKind.Number && n.GetInt64() <= 0) continue;
+                                map[id.GetInt32()] = v.GetInt64();
+                            }
+                        }
+                    }
+                    else _services.Log.Warning($"[Atlas] scene index → HTTP {(int)resp.StatusCode}");
+                }
+                catch (Exception ex) { _services.Log.Warning($"[Atlas] scene index failed: {ex.GetType().Name}: {ex.Message}"); }
+                finally { _gate.Release(); }
+            }
+            var cachedScenes = CachedScenes();
+            if (!_disposed) _services.Framework.Post(() => onMain(map, cachedScenes));
+        });
+    }
+
+    // Scenes that have a cached copy on disk (worker thread: a directory listing).
+    private System.Collections.Generic.List<int> CachedScenes()
+    {
+        var list = new System.Collections.Generic.List<int>();
+        lock (_diskLock)
+            foreach (var name in _services.Data.List(CachePrefix))
+            {
+                // PluginDataStore.List returns names relative to the data dir: "points/123.json"
+                int slash = name.LastIndexOf('/');
+                string file = slash >= 0 ? name.Substring(slash + 1) : name;
+                if (!file.EndsWith(".json", StringComparison.Ordinal)) continue;
+                if (int.TryParse(file.Substring(0, file.Length - 5), NumberStyles.Integer, CultureInfo.InvariantCulture, out int s)) list.Add(s);
+            }
+        return list;
     }
 
     private static FetchResult Fill(FetchResult res, byte[] body, FetchState state, long fetched)

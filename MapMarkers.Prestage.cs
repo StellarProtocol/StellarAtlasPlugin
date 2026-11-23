@@ -1,0 +1,281 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+
+namespace Stellar.Atlas;
+
+// "Prepare in advance" (user-approved 2026-11-23), like the game's own NPC flags: every scene's flags are ALREADY in
+// _G.__atlas_map[scene] when the GAME builds a map (scene load, big-map browse), so they appear in the game's own first
+// RefreshMap — no extra MapFlagShowListChanged (a ~100–280 ms rebuild) on scene change or browse.
+//
+//   1. Index: GET /v1/scenes (per-scene versions) after login, on every scene change and every IndexEvery seconds.
+//      Every scene with a disk copy is queued; a copy whose version differs from the index is refreshed from the server
+//      (AtlasClient.LoadScene, worker thread). A scene never visited (no copy) is fetched only on its first visit /
+//      browse — then staged and dispatched once, as before.
+//   2. Staging, one scene at a time: same filter / order / cap / hides as the current scene (BuildStaged = Select minus
+//      the live part), pushed in 25-point batches within StageBudgetMs per tick, committed WITHOUT a dispatch — unless
+//      that scene is on screen (the current scene is owned by Select; a big-map-browsed scene dispatches once).
+//      All scenes use the same cap as the current one (MapCap): the staged set must be exactly what Select would build
+//      on arrival, or entering the scene would rebuild anyway; it also bounds the minimap's flag count.
+//   3. Scene change (OnScene): a staged scene adopts its staged set + signature, so Select sees "no change" and does
+//      not dispatch. Logged: "[Atlas] scene change S: flags ready (staged)" / "not staged → fetch".
+//   4. Chip toggles: after the 1.2 s hold every staged scene is re-queued with the new filter (silent, except the
+//      current scene — Select — and a browsed one). Scenes with nothing to show are dropped from Lua (memory bound) and
+//      remembered as empty, so a browse doesn't fetch them.
+// The icon pass only covers the current scene (both maps) + the one scene being browsed on the big map.
+internal sealed partial class MapMarkers
+{
+    private const double StageBudgetMs = 2.0;
+    private const float  IndexEvery    = 600f;
+
+    private sealed class StagedScene
+    {
+        public List<Entry> Entries = new();
+        public ulong Sig, SigAll;
+        public int Mask;
+    }
+
+    private readonly Dictionary<int, StagedScene> _staged = new();
+    private readonly Dictionary<int, int> _emptyScenes = new();   // scene → mask it was empty with
+    private Dictionary<int, long> _index = new();
+    private readonly List<int> _queue = new();                    // scenes to (re)stage, front = next
+    private readonly HashSet<int> _queued = new();
+    private readonly HashSet<int> _cachedScenes = new();
+    private int _loading, _readyScene, _priorityScene, _viewedScene, _stagedMask = -1, _curMask;
+    private AtlasPoint[]? _readyPoints;
+    private bool _indexInFlight, _indexDue = true, _jobExtra;
+    private float _indexAt = -1000f, _sceneChangeAt = -1f;
+    private int _stagedCount, _stagedFlags;
+
+    private NearestModel? _modelRef;
+    private OpenedStore? _openedRef;
+
+    private void Enqueue(int scene, bool front = false)
+    {
+        if (scene <= 0 || scene >= 10000) return;
+        if (_queued.Add(scene)) { if (front) _queue.Insert(0, scene); else _queue.Add(scene); }
+        else if (front) { _queue.Remove(scene); _queue.Insert(0, scene); }
+    }
+
+    // Tick (5 Hz, idle, installed, after the current scene had its turn). Returns true when it used the tick.
+    private bool TickPrestage(float now, int mask)
+    {
+        // index (login / scene change / every 10 min)
+        if (!_indexInFlight && (_indexDue || now - _indexAt > IndexEvery))
+        {
+            _indexDue = false; _indexInFlight = true; _indexAt = now;
+            _client.FetchIndex((idx, cached) =>
+            {
+                _indexInFlight = false;
+                foreach (int s in cached) _cachedScenes.Add(s);
+                var old = _index;
+                if (idx != null) _index = idx;
+                foreach (int s in _cachedScenes)
+                {
+                    bool known = _staged.ContainsKey(s) || _emptyScenes.ContainsKey(s);
+                    bool changed = idx != null && idx.TryGetValue(s, out long v) && (!old.TryGetValue(s, out long ov) || ov != v);
+                    if (!known || changed) Enqueue(s);
+                }
+            });
+        }
+
+        // filter changed (after the chip-click hold): everything is rebuilt with the new filter
+        bool anyShown = (mask & AtlasGroups.ShownBits) != 0;
+        if (mask != _stagedMask && now >= _filterHoldUntil)
+        {
+            _stagedMask = mask;
+            if (!anyShown)
+            {
+                // every chip off: nothing to show anywhere → drop the other scenes from Lua at once (no load needed)
+                var drop = new List<int>(_staged.Keys);
+                foreach (int s in drop)
+                {
+                    if (s == _curScene) continue;
+                    _staged.Remove(s);
+                    _emptyScenes[s] = mask;
+                    Call("__atlas_mdrop(" + s.ToString(CultureInfo.InvariantCulture) + ")");
+                    if (s == _viewedScene) { DropIcons(s); _dispatchPending = true; }
+                }
+            }
+            else
+            {
+                foreach (int s in _staged.Keys) Enqueue(s);
+                foreach (int s in _emptyScenes.Keys) Enqueue(s);
+            }
+        }
+
+        // a loaded scene → build + start its push
+        if (_readyPoints != null)
+        {
+            int scene = _readyScene;
+            var pts = _readyPoints;
+            _readyPoints = null;
+            if (scene == _curScene) return false;   // the current scene is Select's
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            BuildStaged(scene, pts, mask);
+            Slow("prestage build", t0);
+            if (_staged.TryGetValue(scene, out var st) && st.Sig == _jobSig && st.Mask == mask) { _job.Clear(); return true; }
+            if (_job.Count == 0)
+            {
+                bool wasStaged = _staged.Remove(scene);
+                _emptyScenes[scene] = mask;
+                if (wasStaged) Call("__atlas_mdrop(" + scene.ToString(CultureInfo.InvariantCulture) + ")");
+                if (scene == _viewedScene) { DropIcons(scene); if (wasStaged) _dispatchPending = true; }
+                if (scene == _priorityScene) { _priorityScene = 0; _services.Log.Info($"[Atlas] big map viewing scene {scene}: 0 points staged"); }
+                return true;
+            }
+            _emptyScenes.Remove(scene);
+            _jobScene = scene;
+            _jobExtra = true;
+            _jobPos = 0;
+            if (!Call("__atlas_mstage()")) { _jobPos = -1; Enqueue(scene); }
+            return true;
+        }
+
+        // load the next queued scene (worker thread) — not while every chip is off (nothing could be shown; the queue
+        // waits for the first chip)
+        if (_loading == 0 && _queue.Count > 0 && anyShown)
+        {
+            int scene = _queue[0];
+            _queue.RemoveAt(0);
+            _queued.Remove(scene);
+            if (scene == _curScene) return false;
+            _loading = scene;
+            long ver = _index.TryGetValue(scene, out long v) ? v : -1;
+            _client.LoadScene(scene, ver, fetchWithoutCache: scene == _priorityScene, res =>
+            {
+                _loading = 0;
+                if (res.State == AtlasClient.FetchState.NoData && res.Points.Length == 0) return;   // never visited, not fetched
+                _cachedScenes.Add(res.Scene);
+                _readyScene = res.Scene;
+                _readyPoints = res.Points;
+            });
+            return false;
+        }
+        if (_queue.Count == 0 && _loading == 0 && _stagedCount > 0)
+        {
+            _services.Log.Info($"[Atlas] prestaged {_stagedCount} scenes ({_stagedFlags} flags); {_staged.Count} scenes staged in total");
+            _stagedCount = _stagedFlags = 0;
+        }
+        return false;
+    }
+
+    // Select minus the live part: same candidates (not stale, filter, id range), same hides (this character's opened /
+    // not-here for THAT scene, kept in the "all" signature), same order and cap → the same signature Select would get.
+    private void BuildStaged(int scene, AtlasPoint[] points, int mask)
+    {
+        _cands.Clear();
+        foreach (var p in points)
+            if (!p.Stale && (mask & (1 << (int)p.Chip)) != 0 && p.Id > 0 && p.Id < LiveIdBase) _cands.Add(p);
+        int n = _cands.Count;
+        if (_keys.Length < n) { _keys = new long[n * 2]; _idx = new int[n * 2]; }
+        for (int i = 0; i < n; i++)
+        {
+            var ap = (AtlasPoint)_cands[i];
+            _keys[i] = CapKey(ap.Chip, ap.Id);
+            _idx[i] = i;
+        }
+        Array.Sort(_keys, _idx, 0, n);
+        _job.Clear();
+        _jobHidden.Clear();
+        ulong sig = 1469598103934665603UL, sigAll = sig;
+        int take = Math.Min(n, MapCap);
+        LogCap(scene, take, n);
+        for (int k = 0; k < take; k++)
+        {
+            var p = (AtlasPoint)_cands[_idx[k]];
+            sigAll = (sigAll ^ (ulong)p.Id) * 1099511628211UL;
+            sigAll = (sigAll ^ (ulong)p.Chip) * 1099511628211UL;
+            if (_openedRef != null && _openedRef.MatchesIn(scene, p)) continue;
+            string name = _modelRef != null ? _modelRef.ServerName(p) : p.Label;
+            _job.Add(new Entry { N = p.Id, Chip = p.Chip, X = p.X, Y = p.HasY ? p.Y : 0f, Z = p.Z,
+                                 Name = name.Length > 0 ? name : ChipName(p.Chip) });
+            sig = (sig ^ (ulong)p.Id) * 1099511628211UL;
+            sig = (sig ^ (ulong)p.Chip) * 1099511628211UL;
+        }
+        _jobSig = sig ^ (ulong)scene;
+        _jobSigAll = sigAll ^ (ulong)scene;
+    }
+
+    // PushStep finished a prestaged scene: remember it; rebuild only if it is on screen (browsed on the big map).
+    private bool CommittedStaged(int scene)
+    {
+        _staged[scene] = new StagedScene { Entries = new List<Entry>(_job), Sig = _jobSig, SigAll = _jobSigAll, Mask = _curMask };
+        _stagedCount++; _stagedFlags += _job.Count;
+        bool onScreen = scene == _viewedScene || scene == _priorityScene;
+        if (scene == _viewedScene) CommitIcons(scene, _job, extra: true);
+        if (scene == _priorityScene)
+        {
+            _priorityScene = 0;
+            _services.Log.Info($"[Atlas] big map viewing scene {scene}: {_job.Count} points staged");
+        }
+        return onScreen;
+    }
+
+    // The current scene's own push (Select) keeps the staged copy in sync, so leaving and re-entering needs no rebuild.
+    private void CommittedCurrent(int scene)
+    {
+        _staged[scene] = new StagedScene { Entries = new List<Entry>(_job), Sig = _jobSig, SigAll = _jobSigAll, Mask = _curMask };
+        _emptyScenes.Remove(scene);
+    }
+
+    // FrameTick, right after a rebuild bump: did the big map ask for a scene that isn't the current one?
+    private void NoteOtherRequest()
+    {
+        if (!Lua.TryReadGlobalNumber("__atlas_other", out double v)) return;
+        Lua.DoString("rawset(_G,'__atlas_other',nil)");
+        int s = (int)v;
+        if (s <= 0 || s == _curScene || s >= 10000) return;
+        if (s != _viewedScene && _viewedScene != 0 && _viewedScene != _curScene) DropIcons(_viewedScene);
+        _viewedScene = s;
+        if (_staged.TryGetValue(s, out var st)) { CommitIcons(s, st.Entries, extra: true); return; }   // already drawn by the game
+        if (_emptyScenes.ContainsKey(s) || (_curMask & AtlasGroups.ShownBits) == 0) return;
+        _priorityScene = s;   // never visited → fetch now, stage, dispatch once
+        Enqueue(s, front: true);
+    }
+
+    // Big map closed: stop re-skinning the browsed scene (its data stays staged for the next look).
+    private void BigMapClosed()
+    {
+        if (_viewedScene != 0 && _viewedScene != _curScene) DropIcons(_viewedScene);
+        _viewedScene = 0;
+    }
+
+    // Scene change: adopt the staged set (→ no dispatch) or fall back to fetch + one dispatch.
+    private void AdoptScene(int scene, float now)
+    {
+        _sceneChangeAt = now;
+        _indexDue = true;
+        if (_staged.TryGetValue(scene, out var st) && st.Mask == _curMask)
+        {
+            _lastSig = st.Sig; _lastSigAll = st.SigAll;
+            CommitIcons(scene, st.Entries, extra: false);
+            _services.Log.Info($"[Atlas] scene change {scene}: flags ready (staged, {st.Entries.Count})");
+        }
+        else if (_emptyScenes.TryGetValue(scene, out int m) && m == _curMask)
+        {
+            _lastSig = _lastSigAll = 0;
+            _services.Log.Info($"[Atlas] scene change {scene}: nothing to show (staged empty)");
+        }
+        else
+        {
+            _lastSig = _lastSigAll = 0;
+            _services.Log.Info($"[Atlas] scene change {scene}: not staged → fetch");
+        }
+    }
+
+    // Icon pass: the first current-scene unit re-skinned after a scene change → how long the markers took.
+    private void NoteShown(float now)
+    {
+        if (_sceneChangeAt < 0f) return;
+        _services.Log.Info($"[Atlas] scene {_curScene} markers shown after {(int)((now - _sceneChangeAt) * 1000f)} ms");
+        _sceneChangeAt = -1f;
+    }
+
+    private void ResetPrestage()
+    {
+        _staged.Clear(); _emptyScenes.Clear(); _queue.Clear(); _queued.Clear();
+        _loading = _readyScene = _priorityScene = _viewedScene = 0;
+        _readyPoints = null; _stagedMask = -1; _indexDue = true; _sceneChangeAt = -1f;
+    }
+}
