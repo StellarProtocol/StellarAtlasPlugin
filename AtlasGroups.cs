@@ -29,13 +29,15 @@ internal static class AtlasGroups
 
     public static bool IsChest(Chip c) => c <= Chip.OtherChests;
 
-    // Prototype dot colours (fixed semantic colours, SDL §3 "Chips"). The More… groups are new (not in the prototype).
+    // Fixed semantic colours (SDL §3 "Chips"). Chest rarities (user-approved 2026-11-23, overrides the prototype's
+    // dots): silver / copper (game "Epic") / gold (game "Legendary") / coral — the same colours as the map marker tiles
+    // (tools/make-map-icons.py). The More… groups are new (not in the prototype).
     public static ColorRgba Color(Chip c) => c switch
     {
-        Chip.Common      => Rgb(0xc9c9c9),
-        Chip.Exquisite   => Rgb(0x9cc8ff),
-        Chip.Luxurious   => Rgb(0xffcc73),
-        Chip.OtherChests => Rgb(0xff9580),
+        Chip.Common      => Rgb(0x98a2a7),
+        Chip.Exquisite   => Rgb(0xc8763a),
+        Chip.Luxurious   => Rgb(0xf2bf1a),
+        Chip.OtherChests => Rgb(0xd9604a),
         Chip.Herbs       => Rgb(0x8ce68c),
         Chip.Ore         => Rgb(0xb385ff),
         Chip.Fishing     => Rgb(0x66d9ff),
@@ -51,6 +53,9 @@ internal static class AtlasGroups
     };
 
     public static readonly ColorRgba MoreDot = Rgb(0x9b8aa5);   // the More… chip's own dot (prototype)
+
+    // Embedded map tile name stem (Resources/map/map-<stem>-<px>.png).
+    public static string MapIconStem(Chip c) => c.ToString().ToLowerInvariant();
 
     public static string LabelKey(Chip c) => c switch
     {

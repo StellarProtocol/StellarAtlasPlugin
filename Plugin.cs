@@ -19,6 +19,7 @@ namespace Stellar.Atlas;
 //   EntityScanner*.cs         live collection walk (port of the validated Experiment Chest Probe)
 //   AtlasClient*.cs           HTTP (points + signed reports), disk cache — worker thread only
 //   NearestModel.cs           server + live merge, the 8 nearest shown points
+//   MapMarkers*.cs            the shown points as markers on the game's own big map + minimap (option C)
 public sealed partial class Plugin : IStellarPlugin
 {
     public string Name => "Atlas";
@@ -38,6 +39,7 @@ public sealed partial class Plugin : IStellarPlugin
     private readonly ReportQueue   _reports;
     private readonly OpenedStore   _opened;
     private readonly NearestModel  _model;
+    private readonly MapMarkers    _map;
 
     private bool _share;              // per install, default ON (user decision); see SharingActive
     private bool _noticeSeen;         // the first-open notice was answered
@@ -61,6 +63,7 @@ public sealed partial class Plugin : IStellarPlugin
         _scanner = new EntityScanner(services, _lua);
         _opened  = new OpenedStore(_client);
         _model   = new NearestModel(_lua);
+        _map     = new MapMarkers(services);
         _reports = new ReportQueue(_client, () => _services.Framework.TimeNow, GetInstall, SetInstall);
         _scanner.Appeared = OnLiveAppeared;
         _scanner.Opened   = OnLiveOpened;
@@ -121,6 +124,7 @@ public sealed partial class Plugin : IStellarPlugin
         _scanner.Reset();
         _model.Clear();
         _lua.OnLogout();
+        _map.OnLogout();
         _scene = 0;
         _charId = 0;
     }
@@ -193,6 +197,7 @@ public sealed partial class Plugin : IStellarPlugin
         StopTicks();
         _centerer.Stop();
         StopGuide(clearMarker: true);
+        _map.Restore();
         _launcherEntry.Dispose();
         _window.Remove();
         _client.Dispose();

@@ -6,9 +6,11 @@ namespace Stellar.Atlas;
 // Scheduling. Everything runs off IFramework.Every, which rides the plugin Update tick (world-gated by the framework), and
 // each callback also self-gates on Phase == World && IsWorldActive && !Loading before touching the game
 // (Game-Phases-and-Tick-Gating.md; Plugin-Performance-Rules.md §3 "never bind game types before world-ready").
-//   5 Hz  character / scene id / player position / guide arrival       (three field reads + one bound pos read)
+//   5 Hz  character / scene id / player position / guide arrival       (three field reads + one bound pos read);
+//         map markers: a re-selection every ≥3 s, a push only when the shown set changed (MapMarkers.cs)
 //   2 Hz  live collection walk (always in world: opened chests must be caught while the window is closed) and, only
-//         while the window is shown or a guide is active, the NEAREST recompute
+//         while the window is shown or a guide is active, the NEAREST recompute; the map icon pass (one Lua number
+//         read unless the game just rebuilt its map flags)
 //   1 Hz  report batches, 10-min points refresh, the header's "copy from N min ago" age
 public sealed partial class Plugin
 {
@@ -56,6 +58,11 @@ public sealed partial class Plugin
 
         _scanner.ReadPlayer();
         TickGuide();
+        if (_scanner.HasPlayerPos)
+        {
+            var p = _scanner.PlayerPos;
+            _map.Tick(_scene, p.x, p.y, p.z, _mask, _model, _scanner.Live, _opened, _services.Framework.TimeNow);
+        }
     }
 
     private void ScanTick()
@@ -63,6 +70,7 @@ public sealed partial class Plugin
         if (!WorldReady() || _scene <= 0) return;
         _scanner.Poll();
         if (Shown || _guide.Active) RecomputeNearest();
+        _map.PollIcons(_services.Framework.TimeNow);
     }
 
     private void SlowTick()
@@ -81,6 +89,7 @@ public sealed partial class Plugin
         _scene = scene;
         _scanner.Reset();
         _model.Clear();
+        _map.OnScene();
         _opened.SetScene(scene);
         _fetchState = AtlasClient.FetchState.NoData;
         _fetchedOnce = false;

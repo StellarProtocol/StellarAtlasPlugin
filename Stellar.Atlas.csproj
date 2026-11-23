@@ -31,6 +31,8 @@
   <ItemGroup>
     <!-- Glyph pre-drawn per size (tools/icons/gen-atlas-icon.py); the code picks the exact bitmap, never scales one master. -->
     <EmbeddedResource Include="Resources/icons/atlas-*.png" LogicalName="Stellar.Atlas.%(Filename)%(Extension)" />
+    <!-- Big map / minimap marker tiles per chip and size (tools/make-map-icons.py). -->
+    <EmbeddedResource Include="Resources/map/map-*.png" LogicalName="Stellar.Atlas.%(Filename)%(Extension)" />
     <!-- i18n catalogs, auto-discovered by the framework via LogicalName "Stellar.<AssemblyName>.Lang.<locale>.json". -->
     <EmbeddedResource Include="Lang/en.json"  LogicalName="Stellar.Atlas.Lang.en.json" />
     <EmbeddedResource Include="Lang/ja.json"  LogicalName="Stellar.Atlas.Lang.ja.json" />

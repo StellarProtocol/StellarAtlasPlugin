@@ -57,23 +57,32 @@ internal sealed class NearestModel
         _openedVersion = -1;   // re-mark hidden on the next recompute
     }
 
+    public AtlasPoint[] Points => _points;
+
+    // Stale / opened-by-this-character flags, re-marked only when the opened set changes (cheap otherwise).
+    public void RefreshHidden(OpenedStore opened)
+    {
+        if (_openedVersion == opened.Version) return;
+        _openedVersion = opened.Version;
+        foreach (var p in _points) p.Hidden = p.Stale || opened.Matches(p);
+    }
+
+    // A live entity the server doesn't know yet (no row with its uuid, no uuid-less seed of its chip within 5 m).
+    public bool IsLiveOnly(LiveEnt e) => !_pointUuids.Contains(e.Uuid) && !NearSeed(e);
+
     public void Clear() { SetPoints(Array.Empty<AtlasPoint>()); Count = 0; Version++; ChestsOnMap = 0; Nearby = 0; }
 
     // ~2 Hz while the window is open (and whenever the guide needs a fresh "next nearest").
     public void Recompute(float px, float py, float pz, int mask, Dictionary<long, LiveEnt> live, OpenedStore opened)
     {
-        if (_openedVersion != opened.Version)
-        {
-            _openedVersion = opened.Version;
-            foreach (var p in _points) p.Hidden = p.Stale || opened.Matches(p);
-        }
+        RefreshHidden(opened);
 
         // 1) nearest live entities that are shown
         int ln = 0, nearby = 0, liveOnlyChests = 0;
         foreach (var e in live.Values)
         {
             if (!e.Tracked || !e.HasPos || opened.HasUuid(e.Uuid)) continue;
-            if (AtlasGroups.IsChest(e.Chip) && !_pointUuids.Contains(e.Uuid) && !NearSeed(e)) liveOnlyChests++;
+            if (AtlasGroups.IsChest(e.Chip) && IsLiveOnly(e)) liveOnlyChests++;
             if ((mask & (1 << (int)e.Chip)) == 0) continue;
             nearby++;
             ln = Insert(_lp, _ld, ln, e, Dist(e.X, e.Y, e.Z, true, px, py, pz));
@@ -180,13 +189,13 @@ internal sealed class NearestModel
     }
 
     // Names come from the game's CollectionTable (localized by the game); cached per config id by GameLua.
-    private string LiveName(LiveEnt e)
+    public string LiveName(LiveEnt e)
     {
         var info = _lua.Cfg(e.Cfg);
         return info.Name.Length > 0 ? info.Name : "";
     }
 
-    private string ServerName(AtlasPoint p)
+    public string ServerName(AtlasPoint p)
     {
         if (p.ConfigId > 0 && AtlasGroups.HasCollectionConfig(p.Chip))
         {
