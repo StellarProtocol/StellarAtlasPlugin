@@ -24,7 +24,8 @@ public sealed partial class Plugin
     private bool _fetchInFlight;
     private float _lastFetchAt = -1f;
     private AtlasClient.FetchState _fetchState = AtlasClient.FetchState.NoData;
-    private bool _fetchedOnce;             // a fetch for the current scene came back (synced or not)
+    private bool _fetchedOnce;
+    private float _queueLogAt = -100f;             // a fetch for the current scene came back (synced or not)
     private long _fetchedUnix;
 
     private void StartTicks()
@@ -91,6 +92,12 @@ public sealed partial class Plugin
         if (!WorldReady()) return;
         if (SharingActive) _reports.Tick();
         float now = _services.Framework.TimeNow;
+        if (now - _queueLogAt >= 60f)
+        {
+            _queueLogAt = now;
+            _services.Log.Info($"[Atlas] report queue: {_reports.Status()} · sharing={(SharingActive ? "on" : "off")} " +
+                               $"(share={_share}, notice={_noticeShown}, key={(AtlasClient.HasKey ? "set" : "none")}, scene={_scene})");
+        }
         if (_scene > 0 && !_fetchInFlight && _lastFetchAt >= 0f && now - _lastFetchAt >= RefreshSeconds) Fetch();
         TickFlash(now);
     }

@@ -38,8 +38,10 @@ internal sealed class ReportQueue
     private readonly HashSet<long> _queued = new();   // session dedupe
     private readonly StringBuilder _sb = new(2048);
     private float _firstAt = -1f, _notBefore, _backoff = MinBackoff;
-    private int _inFlight, _reRegisters;
+    private int _inFlight, _reRegisters, _firstLoggedScene, _sentTotal;
     private bool _stopped;
+    private string _stopReason = "";
+    private float _lastSendAt = -1f;
 
     public ReportQueue(AtlasClient client, Func<float> now, Func<(string, string)> getCreds, Action<string, string> setCreds,
         Action<string> info)
@@ -56,6 +58,27 @@ internal sealed class ReportQueue
         if (_pending.Count >= MaxPending) _pending.RemoveAt(0);   // rare: only while the server is unreachable for long
         _pending.Add(new Obs { Scene = scene, Cfg = e.Cfg, Uuid = e.Uuid, Group = e.Group, Subtype = e.Subtype, X = e.X, Y = e.Y, Z = e.Z });
         if (_firstAt < 0f) _firstAt = _now();
+        if (scene != _firstLoggedScene)
+        {
+            _firstLoggedScene = scene;   // diagnostics: "nothing observed" vs "nothing sent"
+            _info($"[Atlas] report queue: first find in scene {scene} ({e.Group}/{e.Subtype}, cfg {e.Cfg})");
+        }
+    }
+
+    // One diagnostics line (Plugin.Tick.cs logs it at most once a minute).
+    public string Status()
+    {
+        string last = _lastSendAt < 0f ? "never" : ((int)(_now() - _lastSendAt)).ToString(CultureInfo.InvariantCulture) + " s ago";
+        return $"{_pending.Count} pending, {_queued.Count} seen this session, {_sentTotal} sent, last send {last}"
+               + (_inFlight > 0 ? ", sending" : "") + (_stopped ? ", STOPPED: " + _stopReason : "");
+    }
+
+    private void Stop(string reason)
+    {
+        _stopped = true;
+        _stopReason = reason;
+        Clear();
+        _info("[Atlas] reporting stopped for this session: " + reason);
     }
 
     // Share turned off → forget what is waiting (it must not be sent later).
@@ -94,12 +117,14 @@ internal sealed class ReportQueue
         var body = Encoding.UTF8.GetBytes(sb.ToString());
         var creds = _getCreds();
         _inFlight++;
+        _lastSendAt = _now();
         _client.PostReport(body, creds.Id, creds.Secret, outcome => OnOutcome(outcome, sent, scene));
     }
 
     private void OnOutcome(AtlasClient.ReportOutcome o, List<long> sent, int scene)
     {
         _inFlight--;
+        if (o.Status == AtlasClient.ReportStatus.Ok) _sentTotal += sent.Count;
         if (o.Status == AtlasClient.ReportStatus.Ok)
             _info($"[Atlas] reports sent {sent.Count} (scene {scene}: ok={o.Accepted}, rejected={o.Rejected})");
         else if (o.Status == AtlasClient.ReportStatus.Drop)
@@ -118,12 +143,14 @@ internal sealed class ReportQueue
                 break;
             case AtlasClient.ReportStatus.ReRegister:
                 _setCreds("", "");
-                if (++_reRegisters > MaxReRegister) { _stopped = true; Clear(); break; }
+                if (++_reRegisters > MaxReRegister) { Stop("the server keeps refusing this install (401)"); break; }
                 _notBefore = now + MinBackoff;
                 break;
             case AtlasClient.ReportStatus.Banned:
+                Stop("install banned (403)");
+                break;
             case AtlasClient.ReportStatus.NoKey:
-                _stopped = true; Clear();
+                Stop("this build has no Atlas client key");
                 break;
             default:   // Retry
                 _notBefore = now + _backoff;

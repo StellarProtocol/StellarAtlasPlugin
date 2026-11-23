@@ -22,6 +22,15 @@ namespace Stellar.Atlas;
 //     game rebuilt its flags (_G.__atlas_mapgen changed).
 // Steady cost: ≤ SweepPerPass reference compares per active root per poll, lookups only for units that changed.
 //
+// ⚠️ A map rebuild REASSIGNS pooled units: the Image cached for Id A may now be the unit of Id B. If B's tile equals A's
+// (all Common chests share one tile) the cached check said "A is fine" and A's real unit kept the placeholder for good
+// (in-game 2026-11-23: 20 of 96 minimap units stuck for minutes). So on every rebuild (__atlas_mapgen moved) the cached
+// unit references of BOTH roots are dropped and every Id is looked up again by name.
+//
+// Hidden-in-place (2026-11-23): a chest opened by this character or found "not here" doesn't rebuild the maps (each
+// rebuild is ~90 ms); it stays in the pushed set and its unit is made transparent here (img_icon alpha 0, no raycast),
+// until the next push that happens anyway drops it (MapMarkers.cs Suppress).
+//
 // Rebuild burst (2026-11-23, minimap blink): every rebuild — ours or the game's own (scene load, minimap refresh) —
 // re-creates the units with the placeholder sprite (IconPath must stay non-empty: map_flags_comp initFlagUnit hides the
 // unit first and only shows it again inside the `IconPath ~= ""` branch, so an empty path would hide our flags). The
@@ -34,9 +43,9 @@ namespace Stellar.Atlas;
 // fall back to TINTING the game's white placeholder with the chip colour (the validated look), logged once.
 internal sealed partial class MapMarkers
 {
-    private const int    SweepPerPass = 100;
+    private const int    SweepPerPass = 150;    // 300 entries covered in ≤ 1 s at 2 Hz
     private const int    FindBudget   = 40;
-    private const int    MissBackoff  = 6;      // passes (≈3 s at 2 Hz)
+    private const int    MissBackoff  = 2;      // passes (≈1 s at 2 Hz)
     private const double PassBudgetMs = 3.0;
     private const string BigRootPath  = "zuiroot/UILayerFunc/map_main_pc(Clone)/anim/scrollview_map/node_viewport/rimg_map_bg/node_area_map/node_flags";
     private const string MiniHostName = "main_minimap_sub_pc(Clone)";
@@ -49,11 +58,16 @@ internal sealed partial class MapMarkers
         public int[] RetryAt = Array.Empty<int>();
         public int Cursor;
         public void Reset(int n) { Cache = new Image?[n]; RetryAt = new int[n]; Cursor = 0; }
-        public void ClearMisses() { Array.Clear(RetryAt, 0, RetryAt.Length); }
+        // After a rebuild: forget every cached unit (pooled units now belong to other Ids) and every miss.
+        public void Invalidate() { Array.Clear(Cache, 0, Cache.Length); Array.Clear(RetryAt, 0, RetryAt.Length); }
     }
 
     private string[] _paths = Array.Empty<string>();
     private Chip[] _chips = Array.Empty<Chip>();
+    private long[] _ns = Array.Empty<long>();
+    private bool[] _suppressed = Array.Empty<bool>();
+    private readonly Dictionary<long, int> _nIndex = new();
+    private readonly bool[] _tileFailed = new bool[AtlasGroups.ChipCount];
     private readonly RootState _big = new(), _mini = new();
     private readonly Sprite?[] _sprites = new Sprite?[AtlasGroups.ChipCount];
     private readonly Texture2D?[] _textures = new Texture2D?[AtlasGroups.ChipCount];
@@ -68,19 +82,39 @@ internal sealed partial class MapMarkers
         int n = job.Count;
         _paths = new string[n];
         _chips = new Chip[n];
+        _ns = new long[n];
+        _suppressed = new bool[n];
+        _nIndex.Clear();
         for (int i = 0; i < n; i++)
         {
             _paths[i] = "positionFlagName" + (IdBase + job[i].N).ToString(CultureInfo.InvariantCulture) + "/node_parent/img_icon";
             _chips[i] = job[i].Chip;
+            _ns[i] = job[i].N;
+            _nIndex[job[i].N] = i;
         }
         _big.Reset(n);
         _mini.Reset(n);
+    }
+
+    // Hide these committed entries in place (no map rebuild); their cached units are re-checked at once.
+    private void SuppressIcons(List<long> ns)
+    {
+        foreach (long n in ns)
+        {
+            if (!_nIndex.TryGetValue(n, out int i) || _suppressed[i]) continue;
+            _suppressed[i] = true;
+            _big.Cache[i] = null; _mini.Cache[i] = null;
+            _big.RetryAt[i] = 0; _mini.RetryAt[i] = 0;
+        }
     }
 
     private void ResetIcons()
     {
         _paths = Array.Empty<string>();
         _chips = Array.Empty<Chip>();
+        _ns = Array.Empty<long>();
+        _suppressed = Array.Empty<bool>();
+        _nIndex.Clear();
         _big.Reset(0);
         _mini.Reset(0);
     }
@@ -95,7 +129,7 @@ internal sealed partial class MapMarkers
         if (Lua.TryReadGlobalNumber("__atlas_mapgen", out double gen) && gen != _mapGen)
         {
             _mapGen = gen;
-            _big.ClearMisses(); _mini.ClearMisses();   // fresh units exist now → look again at once
+            _big.Invalidate(); _mini.Invalidate();   // units were reassigned → look every Id up again by name
             _burst = BurstTicks;
         }
         if (_burst <= 0) return;
@@ -148,29 +182,43 @@ internal sealed partial class MapMarkers
         {
             if (finds >= FindBudget || ElapsedMs(t0) > PassBudgetMs) return;   // the cursor keeps our place
             int i = st.Cursor;
-            st.Cursor = (st.Cursor + 1) % n;
-            var sprite = Tile(_chips[i]);
-            if (sprite == null && !_tintFallback) continue;   // tile not decoded yet (one per pass) → next pass
+            if (i >= n) i = 0;
+            st.Cursor = (i + 1) % n;
+            var chip = _chips[i];
+            bool hide = _suppressed[i];
+            Sprite? sprite = null;
+            if (!hide)
+            {
+                sprite = Tile(chip);
+                // null + not failed + not tinting = the tile is still to be decoded (one per pass) → this Id next pass
+                if (sprite == null && !_tintFallback && !_tileFailed[(int)chip]) continue;
+            }
             var img = st.Cache[i];
-            if (img != null && Looks(img, sprite, _chips[i])) continue;
+            if (img != null && Looks(img, sprite, chip, hide)) continue;
             if (img == null && _pass < st.RetryAt[i]) continue;
             finds++;
             var t = root.Find(_paths[i]);
             img = t != null ? t.GetComponent<Image>() : null;
             st.Cache[i] = img;
             if (img == null) { st.RetryAt[i] = _pass + MissBackoff; continue; }
-            Apply(img, sprite, _chips[i]);
+            if (!hide && sprite == null && !_tintFallback) NoTileOnce(chip, i);
+            Apply(img, sprite, chip, hide);
         }
     }
 
-    private bool Looks(Image img, Sprite? sprite, Chip chip)
+    private static readonly Color Clear = new(1f, 1f, 1f, 0f);
+
+    private bool Looks(Image img, Sprite? sprite, Chip chip, bool hide)
     {
+        if (hide) return img.color.a == 0f;
         if (_tintFallback || sprite == null) return img.color == ToColor(AtlasGroups.Color(chip));
-        return img.sprite == sprite;
+        return img.sprite == sprite && img.color.a > 0f;
     }
 
-    private void Apply(Image img, Sprite? sprite, Chip chip)
+    private void Apply(Image img, Sprite? sprite, Chip chip, bool hide)
     {
+        if (hide) { img.color = Clear; img.raycastTarget = false; return; }
+        img.raycastTarget = true;
         if (!_tintFallback && sprite != null)
         {
             try { img.sprite = sprite; img.color = Color.white; return; }
@@ -183,20 +231,31 @@ internal sealed partial class MapMarkers
         img.color = ToColor(AtlasGroups.Color(chip));
     }
 
+    // A unit found while its chip's tile can't be built (missing / undecodable PNG): it gets the tinted placeholder.
+    private readonly bool[] _noTileLogged = new bool[AtlasGroups.ChipCount];
+
+    private void NoTileOnce(Chip chip, int i)
+    {
+        if (_noTileLogged[(int)chip]) return;
+        _noTileLogged[(int)chip] = true;
+        _services.Log.Warning($"[Atlas] map unit found but no tile for {chip} (e.g. Id {IdBase + _ns[i]}) — tinting the placeholder");
+    }
+
     private Sprite? Tile(Chip chip)
     {
         int c = (int)chip;
         var s = _sprites[c];
         if (s != null && _textures[c] != null) return s;
-        if (_tintFallback || _createdThisPass) return null;
+        if (_tintFallback || _tileFailed[c] || _createdThisPass) return null;
         _createdThisPass = true;
         long t0 = Stopwatch.GetTimestamp();
         try
         {
+            if (_tileFailed[c]) return null;
             var png = LoadTilePng(AtlasGroups.MapIconStem(chip));
-            if (png == null) return null;
+            if (png == null) { _tileFailed[c] = true; return null; }
             var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
-            if (!ImageConversion.LoadImage(tex, png)) { UnityEngine.Object.Destroy(tex); return null; }
+            if (!ImageConversion.LoadImage(tex, png)) { UnityEngine.Object.Destroy(tex); _tileFailed[c] = true; return null; }
             tex.hideFlags = HideFlags.HideAndDontSave;
             s = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
             s.hideFlags = HideFlags.HideAndDontSave;

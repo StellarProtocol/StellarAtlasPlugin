@@ -26,6 +26,12 @@ namespace Stellar.Atlas;
 // for reasons the player expects: new scene / new server data, a chip toggled, a chest opened or hidden, a new
 // live-only find. Changes are coalesced: one dispatch at most every DispatchGap seconds, never while a push is running.
 //
+// Hides don't rebuild (2026-11-23: each "not here" hide cost an 84–107 ms rebuild, and a map where the character opened
+// many chests long ago hides several while walking). Two signatures: _jobSigAll ignores opened / not-here hides,
+// _jobSig doesn't. When only the hides changed, the hidden entries are made transparent in place (MapMarkers.Icons.cs
+// SuppressIcons) and folded into the next push that happens anyway; a hide-only push is allowed at most every
+// HideDispatchGap seconds.
+//
 // Ids: Id = 90000000000000 + n (14 digits; the KB recipe used 9e14 = 15 digits). The unit is named
 // "positionFlagName" .. data.Id by Lua string concat (map_flags_comp.lua:398), and Lua 5.1/LuaJIT formats numbers with
 // %.14g — a 15-digit id would come out as "9e+14" for EVERY point. 14 digits print exactly, so C# can rebuild the unit
@@ -38,6 +44,7 @@ internal sealed partial class MapMarkers
     private const int   BatchesPerTick = 1;
     private const float SelectGap      = 2f;     // re-check the set (cheap, no Lua) this often
     private const float DispatchGap    = 5f;     // at most one map rebuild per 5 s
+    private const float HideDispatchGap = 60f;   // …and one per minute when only hides changed
     private const long  IdBase         = 90000000000000L;
     private const long  LiveIdBase     = 600000000L;   // server point ids are assumed < 600 000 000
     private const long  MaxN           = 1000000000L;
@@ -118,7 +125,8 @@ internal sealed partial class MapMarkers
     private int _jobPos = -1, _jobScene;
     private bool _dispatchPending, _installedThisTick;
     private float _nowForDispatch;
-    private ulong _jobSig, _lastSig;
+    private ulong _jobSig, _lastSig, _jobSigAll, _lastSigAll;
+    private readonly List<long> _jobHidden = new();   // Ns in the full set that are hidden by opened / not-here
     private float _lastSelectAt = -100f, _lastDispatchAt = -100f;
     private readonly StringBuilder _sb = new(4096);
 
@@ -167,7 +175,7 @@ internal sealed partial class MapMarkers
         _defined = _installed = false;
         _installRetryAt = 0f;
         _sticky.Clear();
-        _jobPos = -1; _lastSig = 0; _dispatchPending = false;
+        _jobPos = -1; _lastSig = _lastSigAll = 0; _dispatchPending = false;
         ResetIcons();
     }
 
@@ -175,7 +183,7 @@ internal sealed partial class MapMarkers
     public void OnScene()
     {
         _sticky.Clear();
-        _jobPos = -1; _lastSig = 0; _dispatchPending = false;
+        _jobPos = -1; _lastSig = _lastSigAll = 0; _dispatchPending = false;
         ResetIcons();
     }
 
@@ -209,6 +217,12 @@ internal sealed partial class MapMarkers
         if (now - _lastDispatchAt < DispatchGap) return;
         Select(scene, py, mask, model, live, opened);
         if (_jobSig == _lastSig) { _job.Clear(); return; }
+        if (_jobSigAll == _lastSigAll)
+        {
+            // only hides changed → hide those units in place; rebuild only once a minute for this alone
+            SuppressIcons(_jobHidden);
+            if (now - _lastDispatchAt < HideDispatchGap) { _job.Clear(); return; }
+        }
         _jobScene = scene;
         _jobPos = 0;
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -252,6 +266,7 @@ internal sealed partial class MapMarkers
         Call("__atlas_mcommit(" + _jobScene.ToString(CultureInfo.InvariantCulture) + ")");
         _dispatchPending = true;
         _lastSig = _jobSig;
+        _lastSigAll = _jobSigAll;
         CommitIcons(_job);   // MapMarkers.Icons.cs: the unit names + chips the icon pass looks for
         _jobPos = -1;
     }
@@ -272,12 +287,14 @@ internal sealed partial class MapMarkers
         }
 
         _cands.Clear();
+        // Stale points are out; opened / not-here ones stay in the candidate list (for the "all" signature) and are
+        // skipped when the job is built.
         foreach (var p in model.Points)
-            if (!p.Hidden && (mask & (1 << (int)p.Chip)) != 0 && p.Id > 0 && p.Id < LiveIdBase) _cands.Add(p);
+            if (!p.Stale && (mask & (1 << (int)p.Chip)) != 0 && p.Id > 0 && p.Id < LiveIdBase) _cands.Add(p);
         foreach (var kv in _sticky)
         {
             var en = kv.Value;
-            if ((mask & (1 << (int)en.Chip)) != 0 && !opened.HasUuid(kv.Key) && model.IsLiveOnly(kv.Key, en.Chip, en.X, en.Z))
+            if ((mask & (1 << (int)en.Chip)) != 0 && model.IsLiveOnly(kv.Key, en.Chip, en.X, en.Z))
                 _cands.Add(kv);   // boxed KeyValuePair: only live-only finds, a handful per scene
         }
 
@@ -294,24 +311,32 @@ internal sealed partial class MapMarkers
         Array.Sort(_keys, _idx, 0, n);
 
         _job.Clear();
-        ulong sig = 1469598103934665603UL;
+        _jobHidden.Clear();
+        ulong sig = 1469598103934665603UL, sigAll = sig;
         int take = Math.Min(n, MapCap);
         for (int k = 0; k < take; k++)
         {
             var c = _cands[_idx[k]];
+            long nId; Chip chip; bool hidden;
+            if (c is AtlasPoint p) { nId = p.Id; chip = p.Chip; hidden = p.Hidden; }
+            else { var kv = (KeyValuePair<long, Entry>)c; nId = kv.Value.N; chip = kv.Value.Chip; hidden = opened.HasUuid(kv.Key); }
+            if (nId <= 0 || nId >= MaxN) continue;   // keeps Id at 14 digits and Uid (900000000 + n) inside int32
+            sigAll = (sigAll ^ (ulong)nId) * 1099511628211UL;
+            sigAll = (sigAll ^ (ulong)chip) * 1099511628211UL;
+            if (hidden) { _jobHidden.Add(nId); continue; }
             Entry en;
-            if (c is AtlasPoint p)
+            if (c is AtlasPoint sp)
             {
-                string name = model.ServerName(p);
-                en = new Entry { N = p.Id, Chip = p.Chip, X = p.X, Y = p.HasY ? p.Y : py, Z = p.Z, Name = name.Length > 0 ? name : ChipName(p.Chip) };
+                string name = model.ServerName(sp);
+                en = new Entry { N = sp.Id, Chip = sp.Chip, X = sp.X, Y = sp.HasY ? sp.Y : py, Z = sp.Z, Name = name.Length > 0 ? name : ChipName(sp.Chip) };
             }
             else en = ((KeyValuePair<long, Entry>)c).Value;
-            if (en.N <= 0 || en.N >= MaxN) continue;   // keeps Id at 14 digits and Uid (900000000 + n) inside int32
             _job.Add(en);
             sig = (sig ^ (ulong)en.N) * 1099511628211UL;
             sig = (sig ^ (ulong)en.Chip) * 1099511628211UL;
         }
         _jobSig = sig ^ (ulong)scene;
+        _jobSigAll = sigAll ^ (ulong)scene;
     }
 
     private string ChipName(Chip c) => _loc.T(AtlasGroups.LabelKey(c));
