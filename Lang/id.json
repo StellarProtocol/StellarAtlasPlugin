@@ -1,6 +1,7 @@
 {
   "at.title": "Atlas",
   "at.status.synced": "{0} · {1} peti di peta ini · {2} di dekat",
+  "at.status.syncedNone": "{0} · {1} peti di peta ini · belum ada yang ditampilkan",
   "at.status.offline": "Offline · menampilkan salinan {0} lalu",
   "at.status.offlineNone": "Offline · belum ada salinan tersimpan",
   "at.age.min": "{0} mnt",
@@ -35,6 +36,8 @@
   "at.dir.nw": "BL",
   "at.dist": "{0} m",
   "at.empty": "Belum ada peti yang diketahui di sini. Yang kamu temukan akan ditambahkan.",
+  "at.none.title": "Belum ada yang ditampilkan",
+  "at.none.body": "Nyalakan jenis di atas untuk melihatnya di sini dan di petamu.",
   "at.stopGuiding": "Stop pandu",
   "at.hint.sharedMap": "Peta bersama · temuanmu dan lokasinya dibagikan. Tanpa nama.",
   "at.notice.title": "Atlas adalah peta bersama",

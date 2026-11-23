@@ -192,7 +192,7 @@ public sealed partial class Plugin : IStellarPlugin
     {
         _charId = charId;
         // A mask saved before the SHOW redesign keeps the chips that still exist (MigrateMask); a new character gets the
-        // new defaults (Other chests OFF).
+        // new-character default (every chip off).
         _mask = charId != 0 ? AtlasGroups.MigrateMask(_cfg.Get<int>(MaskKey(charId), AtlasGroups.DefaultMask)) : AtlasGroups.DefaultMask;
         _opened.SetCharacter(charId);
         RecomputeNearest();

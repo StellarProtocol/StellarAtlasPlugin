@@ -32,13 +32,41 @@ public sealed partial class Plugin
     private bool HasRow(int slot) { int i = RowIndex(slot); return i >= 0 && i < _model.Count; }
     private ref NearestModel.Row RowAt(int slot) => ref _model.Out[Math.Clamp(RowIndex(slot), 0, NearestModel.Rows - 1)];
 
+    // No chip on (the new-character default): one Tile-coloured message box the height of 3 rows (3 × 28 − 2 = 82 px) +
+    // the remaining 5 ghost rows, so the panel keeps exactly the 8-row height (R14).
+    private const int NoneBoxRows = 3;
+    private static readonly float NoneBoxH = NoneBoxRows * ListRowPitch - ListRowGap;
+
+    private bool NothingShown => (_mask & AtlasGroups.ShownBits) == 0;
+
     private HudElement BuildNearestPanel()
     {
         var rows = new HudElement[NearestModel.Rows];
         for (int s = 0; s < rows.Length; s++) rows[s] = NearestSlot(s);
+        var none = new HudElement[NearestModel.Rows - NoneBoxRows + 1];
+        none[0] = NothingShownTile();
+        for (int s = 1; s < none.Length; s++) none[s] = GhostTile();
         return SectionPanel(() => _loc.T("at.section.nearest"), () => _loc.T("at.hint.nearest"),
-            new ColumnElement(rows, Gap: ListRowGap));
+            new ConditionalElement(() => NothingShown,
+                new ColumnElement(none, Gap: ListRowGap),
+                new ColumnElement(rows, Gap: ListRowGap)));
     }
+
+    // Bold "Nothing shown yet" over a muted two-line hint, centred in an 82 px Tile box.
+    private HudElement NothingShownTile() => new BubbleElement(new RowElement(new HudElement[]
+    {
+        new SpacerElement(0f, NoneBoxH),
+        new CellElement(new ColumnElement(new HudElement[]
+        {
+            DropBold(new TextElement(() => _loc.T("at.none.title"), Color: () => TextColor(), Align: TextAlign.Center,
+                NoWrap: true, FontSize: 13) { Bold = true, Ellipsize = true }),
+            new TextElement(() => _loc.T("at.none.body"), Color: () => MutedColor(), Align: TextAlign.Center,
+                FontSize: 12) { RichEmoji = true, MaxLines = 2, Ellipsize = true },
+        }, Gap: 4f), Weight: 1f),
+    }, Gap: 0.01f))
+    {
+        FillColorFn = () => Fill(TileColor()), CornerRadius = TileRadius, PaddingX = 12f, PaddingY = 0f,
+    };
 
     private HudElement NearestSlot(int slot)
     {

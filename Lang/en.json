@@ -1,6 +1,7 @@
 {
   "at.title": "Atlas",
   "at.status.synced": "{0} · {1} chests on this map · {2} nearby",
+  "at.status.syncedNone": "{0} · {1} chests on this map · nothing shown yet",
   "at.status.offline": "Offline · showing the copy from {0} ago",
   "at.status.offlineNone": "Offline · no saved copy yet",
   "at.age.min": "{0} min",
@@ -35,6 +36,8 @@
   "at.dir.nw": "NW",
   "at.dist": "{0} m",
   "at.empty": "No chests known here yet. Ones you find are added.",
+  "at.none.title": "Nothing shown yet",
+  "at.none.body": "Turn on a type above to see it here and on your map.",
   "at.stopGuiding": "Stop guiding",
   "at.hint.sharedMap": "Shared map · what you find and where is shared. No names.",
   "at.notice.title": "Atlas is a shared map",

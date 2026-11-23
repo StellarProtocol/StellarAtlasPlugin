@@ -76,6 +76,7 @@ public sealed partial class Plugin
     private string _statusText = "", _sceneName = "";
     private int _sceneNameFor, _stChests = -1, _stNearby = -1, _stAge = -1;
     private HeadKind _stKind;
+    private bool _stNone;
 
     private string HeadText()
     {
@@ -83,12 +84,15 @@ public sealed partial class Plugin
         if (kind == HeadKind.Idle) return "";
         if (_sceneNameFor != _scene) { _sceneName = _lua.SceneName(_scene); _sceneNameFor = _sceneName.Length > 0 ? _scene : 0; _statusKey = null; }
         int chests = _model.ChestsOnMap, nearby = _model.Nearby, age = kind == HeadKind.Offline ? AgeBucket() : -1;
-        if (_statusKey != null && kind == _stKind && chests == _stChests && nearby == _stNearby && age == _stAge) return _statusText;
-        _stKind = kind; _stChests = chests; _stNearby = nearby; _stAge = age; _statusKey = "ok";
+        bool none = NothingShown;
+        if (_statusKey != null && kind == _stKind && chests == _stChests && nearby == _stNearby && age == _stAge && none == _stNone)
+            return _statusText;
+        _stKind = kind; _stChests = chests; _stNearby = nearby; _stAge = age; _stNone = none; _statusKey = "ok";
         _statusText = kind switch
         {
             HeadKind.Offline     => _loc.TFormat("at.status.offline", AgeText(age)),
             HeadKind.OfflineNone => _loc.T("at.status.offlineNone"),
+            _ when none          => _loc.TFormat("at.status.syncedNone", _sceneName, chests),
             _                    => _loc.TFormat("at.status.synced", _sceneName, chests, nearby),
         };
         return _statusText;

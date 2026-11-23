@@ -217,6 +217,13 @@ internal sealed partial class MapMarkers
         if (now - _lastDispatchAt < DispatchGap) return;
         Select(scene, py, mask, model, live, opened);
         if (_jobSig == _lastSig) { _job.Clear(); return; }
+        // Nothing to show and nothing of ours on the maps (e.g. every chip off — the new-character default): leave the
+        // game's maps untouched, no push and no rebuild. If flags were pushed earlier, the empty set goes out once to clear.
+        if (_job.Count == 0 && _nIndex.Count == 0)
+        {
+            _lastSig = _jobSig; _lastSigAll = _jobSigAll;
+            return;
+        }
         if (_jobSigAll == _lastSigAll && AllCommitted(_job))
         {
             // only hides changed (nothing un-hidden that the maps don't already have) → hide / show those units in place;

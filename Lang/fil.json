@@ -1,6 +1,7 @@
 {
   "at.title": "Atlas",
   "at.status.synced": "{0} · {1} chest sa mapang ito · {2} malapit",
+  "at.status.syncedNone": "{0} · {1} chest sa mapang ito · wala pang ipinapakita",
   "at.status.offline": "Offline · kopya mula {0} ang nakalipas",
   "at.status.offlineNone": "Offline · wala pang naka-save na kopya",
   "at.age.min": "{0} min",
@@ -35,6 +36,8 @@
   "at.dir.nw": "HK",
   "at.dist": "{0} m",
   "at.empty": "Wala pang kilalang chest dito. Idadagdag ang mga mahahanap mo.",
+  "at.none.title": "Wala pang ipinapakita",
+  "at.none.body": "I-on ang isang uri sa itaas para makita ito rito at sa mapa mo.",
   "at.stopGuiding": "Itigil gabay",
   "at.hint.sharedMap": "Shared na mapa · ibinabahagi ang nahanap mo at kung saan. Walang pangalan.",
   "at.notice.title": "Ang Atlas ay isang shared na mapa",

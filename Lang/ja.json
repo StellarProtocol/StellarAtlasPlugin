@@ -1,6 +1,7 @@
 {
   "at.title": "アトラス",
   "at.status.synced": "{0} · このマップの宝箱 {1} 個 · 近く {2}",
+  "at.status.syncedNone": "{0} · このマップの宝箱 {1} 個 · まだ何も表示していません",
   "at.status.offline": "オフライン · {0}前のデータを表示中",
   "at.status.offlineNone": "オフライン · 保存データなし",
   "at.age.min": "{0}分",
@@ -35,6 +36,8 @@
   "at.dir.nw": "北西",
   "at.dist": "{0} m",
   "at.empty": "ここで見つかった宝箱はまだありません。見つけると追加されます。",
+  "at.none.title": "まだ何も表示していません",
+  "at.none.body": "上で種類をオンにすると、ここと地図に表示されます。",
   "at.stopGuiding": "案内を終了",
   "at.hint.sharedMap": "共有マップ · 見つけた物と場所が共有されます。名前は送りません。",
   "at.notice.title": "アトラスは共有マップです",

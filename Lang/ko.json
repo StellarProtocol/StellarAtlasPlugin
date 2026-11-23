@@ -1,6 +1,7 @@
 {
   "at.title": "아틀라스",
   "at.status.synced": "{0} · 이 지도의 상자 {1}개 · 근처 {2}",
+  "at.status.syncedNone": "{0} · 이 지도의 상자 {1}개 · 아직 표시된 것 없음",
   "at.status.offline": "오프라인 · {0} 전 사본 표시 중",
   "at.status.offlineNone": "오프라인 · 저장된 사본 없음",
   "at.age.min": "{0}분",
@@ -35,6 +36,8 @@
   "at.dir.nw": "북서",
   "at.dist": "{0} m",
   "at.empty": "여기서 알려진 상자가 아직 없습니다. 찾으면 추가됩니다.",
+  "at.none.title": "아직 표시된 것이 없습니다",
+  "at.none.body": "위에서 종류를 켜면 여기와 지도에 표시됩니다.",
   "at.stopGuiding": "안내 중지",
   "at.hint.sharedMap": "공유 지도 · 찾은 것과 위치가 공유됩니다. 이름은 보내지 않습니다.",
   "at.notice.title": "아틀라스는 공유 지도입니다",

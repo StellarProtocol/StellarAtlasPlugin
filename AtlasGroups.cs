@@ -24,9 +24,10 @@ internal enum Chip : byte
 internal static class AtlasGroups
 {
     public const int ChipCount = 16;   // array size for per-chip caches (indexed by the enum value)
-    // Chests Common / Epic / Legendary ON, everything else OFF (Other chests OFF since the redesign; an existing saved
-    // mask keeps its own bits — see MigrateMask).
-    public const int DefaultMask = (1 << (int)Chip.Common) | (1 << (int)Chip.Exquisite) | (1 << (int)Chip.Luxurious);
+    // A new character starts with EVERY chip off (user-approved 2026-11-23): nothing is listed or put on the game's maps
+    // until the player turns a type on. A character with a saved filter keeps it (MigrateMask).
+    public const int DefaultMask = 0;
+    public const int ShownBits = KeptBits;
     private const int KeptBits = (1 << (int)Chip.Common) | (1 << (int)Chip.Exquisite) | (1 << (int)Chip.Luxurious)
                                  | (1 << (int)Chip.OtherChests) | (1 << (int)Chip.Herbs) | (1 << (int)Chip.Ore)
                                  | (1 << (int)Chip.Fishing) | (1 << (int)Chip.Books);
