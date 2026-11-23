@@ -12,12 +12,19 @@ namespace Stellar.Atlas;
 // and append one Position flag per point (TypeId 303 = the Position Sharing scene tag; Id unique; Layer = the arg). The
 // game then draws them, lists them in its nearby pick list and Info panel (Name) with its own Navigate / Track buttons.
 //
-// Data flow: C# picks the CURRENT shown set (SHOW chips, no opened chests, no stale points) for the scene, capped to the
-// MapCap nearest to the player (the wrapper serves big map AND minimap and can't tell them apart, so the cap is total),
-// and pushes it into a Lua staging table in bounded batches (BatchSize per call, BatchesPerTick per 5 Hz tick), then
-// commits it as _G.__atlas_map[sceneId] and dispatches MapFlagShowListChanged so both maps rebuild. A push happens only
-// when the set's signature changed (ids + chips), at most every MinPushGap seconds. Bridge chunks don't share plain
-// globals → everything lives under rawset(_G, …). Every helper is compiled once (Plugin-Performance-Rules.md §4).
+// Data flow: C# picks the shown set for the scene and pushes it into a Lua staging table in bounded batches (BatchSize
+// per call, one call per 5 Hz tick), commits it as _G.__atlas_map[sceneId] and dispatches MapFlagShowListChanged so both
+// maps rebuild. Bridge chunks don't share plain globals → everything lives under rawset(_G, …). Every helper is compiled
+// once (Plugin-Performance-Rules.md §4).
+//
+// ⚠️ A dispatch makes the game rebuild ALL flags of BOTH maps: ~80–114 ms on the main thread with 100 of ours, and
+// every unit comes back with the placeholder sprite until our pass re-skins it (in-game 2026-11-23: a nearest-300 set
+// that followed the player re-dispatched every few metres → minimap icons blinked + repeated 100 ms hitches). So the set
+// must NOT depend on where the player stands: it is every point passing the SHOW filters (minus opened / not-here /
+// stale) in a FIXED order — chests first, then by group, then by point id — capped at MapCap. Live entities the server
+// doesn't know are remembered for the scene once seen (they don't drop out when they leave AOI). The set changes only
+// for reasons the player expects: new scene / new server data, a chip toggled, a chest opened or hidden, a new
+// live-only find. Changes are coalesced: one dispatch at most every DispatchGap seconds, never while a push is running.
 //
 // Ids: Id = 90000000000000 + n (14 digits; the KB recipe used 9e14 = 15 digits). The unit is named
 // "positionFlagName" .. data.Id by Lua string concat (map_flags_comp.lua:398), and Lua 5.1/LuaJIT formats numbers with
@@ -29,7 +36,8 @@ internal sealed partial class MapMarkers
     private const int   MapCap         = 300;
     private const int   BatchSize      = 25;
     private const int   BatchesPerTick = 1;
-    private const float MinPushGap     = 3f;
+    private const float SelectGap      = 2f;     // re-check the set (cheap, no Lua) this often
+    private const float DispatchGap    = 5f;     // at most one map rebuild per 5 s
     private const long  IdBase         = 90000000000000L;
     private const long  LiveIdBase     = 600000000L;   // server point ids are assumed < 600 000 000
     private const long  MaxN           = 1000000000L;
@@ -98,18 +106,20 @@ internal sealed partial class MapMarkers
     private bool _defined, _installed;
 
     // selection scratch (grown on demand, reused — no allocation per sync once warm)
-    private float[] _keys = new float[256];
+    private long[] _keys = new long[256];
     private int[] _idx = new int[256];
     private readonly List<object> _cands = new(256);
     private readonly Dictionary<long, long> _liveIds = new();   // uuid → n, session-stable
+    private readonly Dictionary<long, Entry> _sticky = new();   // live-only finds of this scene (uuid → entry)
     private long _liveNext;
 
     // the job being pushed / the set last committed
     private readonly List<Entry> _job = new(MapCap);
     private int _jobPos = -1, _jobScene;
     private bool _dispatchPending, _installedThisTick;
+    private float _nowForDispatch;
     private ulong _jobSig, _lastSig;
-    private float _lastPushAt = -100f;
+    private float _lastSelectAt = -100f, _lastDispatchAt = -100f;
     private readonly StringBuilder _sb = new(4096);
 
     public MapMarkers(IPluginServices services)
@@ -156,6 +166,7 @@ internal sealed partial class MapMarkers
     {
         _defined = _installed = false;
         _installRetryAt = 0f;
+        _sticky.Clear();
         _jobPos = -1; _lastSig = 0; _dispatchPending = false;
         ResetIcons();
     }
@@ -163,6 +174,7 @@ internal sealed partial class MapMarkers
     // Scene change: drop what is shown; the next Sync pushes the new scene once its points arrive.
     public void OnScene()
     {
+        _sticky.Clear();
         _jobPos = -1; _lastSig = 0; _dispatchPending = false;
         ResetIcons();
     }
@@ -176,21 +188,26 @@ internal sealed partial class MapMarkers
     }
 
     // 5 Hz (world-ready). Advances a push in progress, or starts one when the shown set changed.
-    public void Tick(int scene, float px, float py, float pz, int mask, NearestModel model, Dictionary<long, LiveEnt> live,
+    // `dataReady` = the scene's server points have arrived (or failed): selecting before that would push the live-only
+    // finds alone and then rebuild the maps a second time when the points land.
+    public void Tick(int scene, bool dataReady, float py, int mask, NearestModel model, Dictionary<long, LiveEnt> live,
         OpenedStore opened, float now)
     {
         if (scene <= 0) return;
         // Hitch fix (2026-11-23, [Hitch] stellar.atlas=137.5 ms once after the first push): every Lua step gets its own
         // tick — define/install, each batch, the commit, and the map refresh dispatch — and each is timed (Slow()).
         _installedThisTick = false;
+        _nowForDispatch = now;
         if (_dispatchPending) { Dispatch(); return; }
         if (_jobPos >= 0) { PushStep(); return; }
         if (!EnsureInstalled(now) || _installedThisTick) return;   // install (prewarm) on its own tick, ahead of any push
-        if (now - _lastPushAt < MinPushGap) return;
-        // Re-selected every MinPushGap (one pass over the scene's points + a sort of ≤ a few thousand floats ≈ sub-ms);
-        // pushed only when the nearest-MapCap set (ids + chips) actually changed — e.g. the player walked far enough.
-        _lastPushAt = now;
-        Select(scene, px, py, pz, mask, model, live, opened);
+        if (!dataReady || now - _lastSelectAt < SelectGap) return;
+        // Re-selected every SelectGap (one pass over the scene's points + a sort of a few thousand longs, sub-ms, no
+        // Lua); pushed only when the set (ids + chips) changed AND the last map rebuild is ≥ DispatchGap ago — changes
+        // inside the gap are picked up by a later select (coalesced).
+        _lastSelectAt = now;
+        if (now - _lastDispatchAt < DispatchGap) return;
+        Select(scene, py, mask, model, live, opened);
         if (_jobSig == _lastSig) { _job.Clear(); return; }
         _jobScene = scene;
         _jobPos = 0;
@@ -204,6 +221,7 @@ internal sealed partial class MapMarkers
     private void Dispatch()
     {
         _dispatchPending = false;
+        _lastDispatchAt = _lastSelectAt = _nowForDispatch;
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         Call("__atlas_mdispatch()");
         Slow("map refresh dispatch (" + _paths.Length.ToString(CultureInfo.InvariantCulture) + " flags)", t0);
@@ -238,25 +256,39 @@ internal sealed partial class MapMarkers
         _jobPos = -1;
     }
 
-    // The shown set: server points (not stale / opened) + live entities the server doesn't know yet, filtered by the
-    // SHOW chips, nearest MapCap. Fills _job and its signature.
-    private void Select(int scene, float px, float py, float pz, int mask, NearestModel model, Dictionary<long, LiveEnt> live,
-        OpenedStore opened)
+    // The shown set: server points (not stale / opened / not-here) + live-only finds of this scene, filtered by the SHOW
+    // chips, in a fixed order (chip, then id) capped at MapCap. Independent of the player's position; `py` only fills the
+    // height of points that have none (it doesn't enter the signature). Fills _job and its signature.
+    private void Select(int scene, float py, int mask, NearestModel model, Dictionary<long, LiveEnt> live, OpenedStore opened)
     {
         model.RefreshHidden(opened);
+        // remember live-only finds for the scene (an AOI exit must not change the set)
+        foreach (var e in live.Values)
+        {
+            if (!e.Tracked || !e.HasPos || _sticky.ContainsKey(e.Uuid) || !model.IsLiveOnly(e)) continue;
+            if (!_liveIds.TryGetValue(e.Uuid, out long id)) { id = LiveIdBase + ++_liveNext; _liveIds[e.Uuid] = id; }
+            string name = model.LiveName(e);
+            _sticky[e.Uuid] = new Entry { N = id, Chip = e.Chip, X = e.X, Y = e.Y, Z = e.Z, Name = name.Length > 0 ? name : ChipName(e.Chip) };
+        }
+
         _cands.Clear();
         foreach (var p in model.Points)
-            if (!p.Hidden && (mask & (1 << (int)p.Chip)) != 0) _cands.Add(p);
-        foreach (var e in live.Values)
-            if (e.Tracked && e.HasPos && (mask & (1 << (int)e.Chip)) != 0 && !opened.HasUuid(e.Uuid) && model.IsLiveOnly(e)) _cands.Add(e);
+            if (!p.Hidden && (mask & (1 << (int)p.Chip)) != 0 && p.Id > 0 && p.Id < LiveIdBase) _cands.Add(p);
+        foreach (var kv in _sticky)
+        {
+            var en = kv.Value;
+            if ((mask & (1 << (int)en.Chip)) != 0 && !opened.HasUuid(kv.Key) && model.IsLiveOnly(kv.Key, en.Chip, en.X, en.Z))
+                _cands.Add(kv);   // boxed KeyValuePair: only live-only finds, a handful per scene
+        }
 
         int n = _cands.Count;
-        if (_keys.Length < n) { _keys = new float[n * 2]; _idx = new int[n * 2]; }
+        if (_keys.Length < n) { _keys = new long[n * 2]; _idx = new int[n * 2]; }
         for (int i = 0; i < n; i++)
         {
-            float x, z;
-            if (_cands[i] is AtlasPoint ap) { x = ap.X; z = ap.Z; } else { var le = (LiveEnt)_cands[i]; x = le.X; z = le.Z; }
-            _keys[i] = Sq(x - px) + Sq(z - pz);
+            Chip chip; long id;
+            if (_cands[i] is AtlasPoint ap) { chip = ap.Chip; id = ap.Id; }
+            else { var en = ((KeyValuePair<long, Entry>)_cands[i]).Value; chip = en.Chip; id = en.N; }
+            _keys[i] = ((long)chip << 40) | id;   // chests (enum 0-3) first, then the gathering groups; then id
             _idx[i] = i;
         }
         Array.Sort(_keys, _idx, 0, n);
@@ -273,13 +305,7 @@ internal sealed partial class MapMarkers
                 string name = model.ServerName(p);
                 en = new Entry { N = p.Id, Chip = p.Chip, X = p.X, Y = p.HasY ? p.Y : py, Z = p.Z, Name = name.Length > 0 ? name : ChipName(p.Chip) };
             }
-            else
-            {
-                var e = (LiveEnt)c;
-                if (!_liveIds.TryGetValue(e.Uuid, out long id)) { id = LiveIdBase + ++_liveNext; _liveIds[e.Uuid] = id; }
-                string name = model.LiveName(e);
-                en = new Entry { N = id, Chip = e.Chip, X = e.X, Y = e.Y, Z = e.Z, Name = name.Length > 0 ? name : ChipName(e.Chip) };
-            }
+            else en = ((KeyValuePair<long, Entry>)c).Value;
             if (en.N <= 0 || en.N >= MaxN) continue;   // keeps Id at 14 digits and Uid (900000000 + n) inside int32
             _job.Add(en);
             sig = (sig ^ (ulong)en.N) * 1099511628211UL;
@@ -304,7 +330,6 @@ internal sealed partial class MapMarkers
     }
 
     private static string F(float v) => v.ToString("0.##", CultureInfo.InvariantCulture);
-    private static float Sq(float v) => v * v;
 
     private void WarnOnce(ref bool flag, string msg) { if (flag) return; flag = true; _services.Log.Warning("[Atlas] " + msg); }
 }

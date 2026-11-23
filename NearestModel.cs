@@ -68,7 +68,8 @@ internal sealed class NearestModel
     }
 
     // A live entity the server doesn't know yet (no row with its uuid, no uuid-less seed of its chip within 5 m).
-    public bool IsLiveOnly(LiveEnt e) => !_pointUuids.Contains(e.Uuid) && !NearSeed(e);
+    public bool IsLiveOnly(LiveEnt e) => IsLiveOnly(e.Uuid, e.Chip, e.X, e.Z);
+    public bool IsLiveOnly(long uuid, Chip chip, float x, float z) => !_pointUuids.Contains(uuid) && !NearSeed(chip, x, z);
 
     public void Clear() { SetPoints(Array.Empty<AtlasPoint>()); Count = 0; Version++; ChestsOnMap = 0; Nearby = 0; }
 
@@ -151,12 +152,12 @@ internal sealed class NearestModel
     }
 
     // A live chest standing on a uuid-less seed is the same chest (not a second one) — chest count only.
-    private bool NearSeed(LiveEnt e)
+    private bool NearSeed(Chip chip, float x, float z)
     {
         foreach (var p in _points)
         {
-            if (p.Uuid != 0 || p.Chip != e.Chip) continue;
-            float dx = e.X - p.X, dz = e.Z - p.Z;
+            if (p.Uuid != 0 || p.Chip != chip) continue;
+            float dx = x - p.X, dz = z - p.Z;
             if (dx * dx + dz * dz <= SupersedeRadius * SupersedeRadius) return true;
         }
         return false;

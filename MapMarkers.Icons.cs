@@ -22,6 +22,13 @@ namespace Stellar.Atlas;
 //     game rebuilt its flags (_G.__atlas_mapgen changed).
 // Steady cost: ≤ SweepPerPass reference compares per active root per poll, lookups only for units that changed.
 //
+// Rebuild burst (2026-11-23, minimap blink): every rebuild — ours or the game's own (scene load, minimap refresh) —
+// re-creates the units with the placeholder sprite (IconPath must stay non-empty: map_flags_comp initFlagUnit hides the
+// unit first and only shows it again inside the `IconPath ~= ""` branch, so an empty path would hide our flags). The
+// wrapper bumps _G.__atlas_mapgen on every rebuild; FrameTick reads that number each plugin tick and, when it moved,
+// runs the same budgeted pass on each of the next BurstTicks ticks (≈0.5 s at the ~30 Hz plugin tick) so the
+// placeholder is replaced within a frame or two instead of after up to 0.5 s; the 2 Hz pass then mops up.
+//
 // Sprites: Texture2D.LoadImage → Sprite.Create, at most ONE new tile per pass (spreads the decode), both HideAndDontSave
 // (WindowBuilder-Patterns "Scene-switch crash audit"), re-validated with Unity's == null. If assigning our sprite throws,
 // fall back to TINTING the game's white placeholder with the chip colour (the validated look), logged once.
@@ -78,17 +85,35 @@ internal sealed partial class MapMarkers
         _mini.Reset(0);
     }
 
-    // 2 Hz (world-ready).
-    public void PollIcons(float now)
+    private const int BurstTicks = 15;
+    private int _burst;
+
+    // Every plugin tick (world-ready): one Lua number read; a pass only during a burst after a rebuild.
+    public void FrameTick(float now)
     {
         if (!_installed || _paths.Length == 0) return;
-        _pass++;
-        _createdThisPass = false;
         if (Lua.TryReadGlobalNumber("__atlas_mapgen", out double gen) && gen != _mapGen)
         {
             _mapGen = gen;
             _big.ClearMisses(); _mini.ClearMisses();   // fresh units exist now → look again at once
+            _burst = BurstTicks;
         }
+        if (_burst <= 0) return;
+        _burst--;
+        RunPass(now);
+    }
+
+    // 2 Hz (world-ready): the steady sweep (late async units, pooled reuse, points pushed since).
+    public void PollIcons(float now)
+    {
+        if (!_installed || _paths.Length == 0 || _burst > 0) return;
+        RunPass(now);
+    }
+
+    private void RunPass(float now)
+    {
+        _pass++;
+        _createdThisPass = false;
         long t0 = Stopwatch.GetTimestamp();
         try
         {
