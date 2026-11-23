@@ -79,6 +79,9 @@ internal sealed class GameLua
 
     // Collection row for a config id; cached (misses included) so each id costs one Lua call per session/language.
     // The LifeCollectListTable row is asked only for non-chest ids (chests have none; a miss may log in the game).
+    // Already resolved (no Lua call)? Lets the prestage build limit first-time lookups per tick.
+    public bool HasCfg(int configId) => configId <= 0 || _cfg.ContainsKey(configId);
+
     public CfgInfo Cfg(int configId)
     {
         if (configId <= 0) return default;

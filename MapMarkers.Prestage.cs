@@ -26,6 +26,7 @@ namespace Stellar.Atlas;
 internal sealed partial class MapMarkers
 {
     private const double StageBudgetMs = 2.0;
+    private const float SettleTimeout = 20f;   // prestaging resumes anyway if the current scene never settles (no data)
     private const float  IndexEvery    = 600f;
 
     private sealed class StagedScene
@@ -44,7 +45,8 @@ internal sealed partial class MapMarkers
     private int _loading, _readyScene, _priorityScene, _viewedScene, _stagedMask = -1, _curMask;
     private AtlasPoint[]? _readyPoints;
     private bool _indexInFlight, _indexDue = true, _jobExtra;
-    private float _indexAt = -1000f, _sceneChangeAt = -1f;
+    private float _indexAt = -1000f, _sceneChangeAt = -1f, _settleAt = -1f, _settleBy;
+    private bool _curSettled = true;
     private int _stagedCount, _stagedFlags;
 
     private NearestModel? _modelRef;
@@ -212,16 +214,29 @@ internal sealed partial class MapMarkers
     }
 
     // Returns true when the build is complete.
+    // In-game 2026-11-23 ("prestage build slice 8.8 ms" after the first slicing): the clock was read every 8 points,
+    // and each first-time config id costs a Lua table lookup (~1 ms). Now the clock is checked after EVERY point, and a
+    // first-time lookup runs only as the slice's first one or while under half the budget — otherwise the slice
+    // stops BEFORE that point and the next tick resolves it (names are cached for the session, so this is front-loaded).
     private bool ContinueBuild(long t0)
     {
+        int done = 0, lookups = 0;
         while (_bPos < _bTake)
         {
-            if (_bPos > 0 && (_bPos & 7) == 0 && ElapsedMs(t0) >= StageBudgetMs) return false;
-            var p = _bPts[_bIdx[_bPos++]];
+            if (done > 0 && ElapsedMs(t0) >= StageBudgetMs) return false;
+            var p = _bPts[_bIdx[_bPos]];
+            bool hidden = _openedRef != null && _openedRef.MatchesIn(_bScene, p);
+            string name = p.Label;
+            if (!hidden && _modelRef != null && !_modelRef.TryServerNameCached(p, out name))
+            {
+                if (lookups > 0 && ElapsedMs(t0) >= StageBudgetMs * 0.5) return false;   // this point first, next tick
+                lookups++;
+                name = _modelRef.ServerName(p);
+            }
+            _bPos++; done++;
             _bSigAll = (_bSigAll ^ (ulong)p.Id) * 1099511628211UL;
             _bSigAll = (_bSigAll ^ (ulong)p.Chip) * 1099511628211UL;
-            if (_openedRef != null && _openedRef.MatchesIn(_bScene, p)) continue;
-            string name = _modelRef != null ? _modelRef.ServerName(p) : p.Label;
+            if (hidden) continue;
             _bJob.Add(new Entry { N = p.Id, Chip = p.Chip, X = p.X, Y = p.HasY ? p.Y : 0f, Z = p.Z,
                                   Name = name.Length > 0 ? name : ChipName(p.Chip) });
             _bSig = (_bSig ^ (ulong)p.Id) * 1099511628211UL;
@@ -280,11 +295,13 @@ internal sealed partial class MapMarkers
     {
         _sceneChangeAt = now;
         _indexDue = true;
+        _curSettled = false; _settleAt = now; _settleBy = now + SettleTimeout;
         if (_staged.TryGetValue(scene, out var st) && st.Mask == _curMask)
         {
             _lastSig = st.Sig; _lastSigAll = st.SigAll;
             CommitIcons(scene, st.Entries, extra: false);
             _services.Log.Info($"[Atlas] scene change {scene}: flags ready (staged, {st.Entries.Count})");
+            Settle(now, "staged");   // already on the game's maps → nothing to wait for
         }
         else if (_emptyScenes.TryGetValue(scene, out int m) && m == _curMask)
         {
@@ -296,6 +313,14 @@ internal sealed partial class MapMarkers
             _lastSig = _lastSigAll = 0;
             _services.Log.Info($"[Atlas] scene change {scene}: not staged → fetch");
         }
+    }
+
+    // The current scene's flags are pushed and dispatched (or there was nothing to push): prestaging may run again.
+    private void Settle(float now, string why)
+    {
+        if (_curSettled) return;
+        _curSettled = true;
+        _services.Log.Info($"[Atlas] scene {_curScene} settled ({why}) after {(int)((now - _settleAt) * 1000f)} ms → prestaging resumes");
     }
 
     // Icon pass: the first current-scene unit re-skinned after a scene change → how long the markers took.
@@ -312,5 +337,6 @@ internal sealed partial class MapMarkers
         _loading = _readyScene = _priorityScene = _viewedScene = _bScene = 0;
         _bPts = Array.Empty<AtlasPoint>();
         _readyPoints = null; _stagedMask = -1; _indexDue = true; _sceneChangeAt = -1f;
+        _curSettled = true;
     }
 }

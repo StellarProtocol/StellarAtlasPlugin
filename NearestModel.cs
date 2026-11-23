@@ -199,6 +199,16 @@ internal sealed class NearestModel
         return info.Name.Length > 0 ? info.Name : "";
     }
 
+    // False when the name needs a first-time table lookup (a Lua call); `name` is then the server label.
+    public bool TryServerNameCached(AtlasPoint p, out string name)
+    {
+        name = p.Label;
+        if (p.ConfigId <= 0 || !AtlasGroups.HasCollectionConfig(p.Chip)) return true;
+        if (!_lua.HasCfg(p.ConfigId)) return false;
+        name = ServerName(p);
+        return true;
+    }
+
     public string ServerName(AtlasPoint p)
     {
         if (p.ConfigId > 0 && AtlasGroups.HasCollectionConfig(p.Chip))

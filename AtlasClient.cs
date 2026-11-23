@@ -19,7 +19,9 @@ namespace Stellar.Atlas;
 // works offline ("Offline · showing the copy from …"), and every refresh is a conditional GET (If-None-Match → 304).
 internal sealed partial class AtlasClient : IDisposable
 {
-    public enum FetchState { Synced, Offline, NoData }
+    // Cached = the disk copy, read without asking the server (the current scene at login / scene change, so its flags
+    // never wait for the network; the server's answer follows and replaces it).
+    public enum FetchState { Synced, Offline, NoData, Cached }
 
     public sealed class FetchResult
     {
@@ -80,6 +82,16 @@ internal sealed partial class AtlasClient : IDisposable
     // ── points ────────────────────────────────────────────────────────────────────────────────────────────────────
     public void FetchScene(int scene, Action<FetchResult> onMain) => LoadScene(scene, -1, true, onMain);
 
+    // The disk copy only — no request, never waits on the one-at-a-time gate (State NoData when there is none).
+    public void LoadCached(int scene, Action<FetchResult> onMain)
+    {
+        _ = Task.Run(async () =>
+        {
+            var res = await FetchSceneWorker(scene, -1, false, cacheOnly: true).ConfigureAwait(false);
+            if (!_disposed) _services.Framework.Post(() => onMain(res));
+        });
+    }
+
     // Prestaging (MapMarkers.Prestage.cs): `indexVersion` = the scene's version in the /v1/scenes index (-1 = unknown →
     // always ask the server). The cached copy is used WITHOUT a request when its version equals the index's; a scene
     // with no cached copy is fetched only when `fetchWithoutCache` (a first visit / browse), never at login.
@@ -101,7 +113,7 @@ internal sealed partial class AtlasClient : IDisposable
         return long.TryParse(digits, NumberStyles.Integer, CultureInfo.InvariantCulture, out long r) ? r : -1;
     }
 
-    private async Task<FetchResult> FetchSceneWorker(int scene, long indexVersion, bool fetchWithoutCache)
+    private async Task<FetchResult> FetchSceneWorker(int scene, long indexVersion, bool fetchWithoutCache, bool cacheOnly = false)
     {
         var res = new FetchResult { Scene = scene, State = FetchState.NoData };
         string name = CachePrefix + scene.ToString(CultureInfo.InvariantCulture);
@@ -120,6 +132,7 @@ internal sealed partial class AtlasClient : IDisposable
 
         if (cached != null && indexVersion >= 0 && EtagVersion(etag) == indexVersion)
             return Fill(res, cached, FetchState.Synced, fetched);   // the index says the copy is current → no request
+        if (cacheOnly) return cached != null ? Fill(res, cached, FetchState.Cached, fetched) : res;
         if (cached == null && !fetchWithoutCache) return res;     // not visited yet → fetched on the first visit only
 
         if (HasKey)

@@ -140,7 +140,7 @@ internal sealed partial class MapMarkers
     // the job being pushed / the set last committed
     private readonly List<Entry> _job = new(MapCap);
     private int _jobPos = -1, _jobScene;
-    private bool _dispatchPending, _installedThisTick;
+    private bool _dispatchPending, _dispatchCurrent, _installedThisTick;
     private float _nowForDispatch;
     private ulong _jobSig, _lastSig, _jobSigAll, _lastSigAll;
     private readonly List<long> _jobHidden = new();   // Ns in the full set that are hidden by opened / not-here
@@ -193,7 +193,7 @@ internal sealed partial class MapMarkers
         _defined = _installed = false;
         _installRetryAt = 0f;
         _sticky.Clear();
-        _jobPos = -1; _lastSig = _lastSigAll = 0; _dispatchPending = false;
+        _jobPos = -1; _lastSig = _lastSigAll = 0; _dispatchPending = false; _dispatchCurrent = false;
         _needSetCur = _needReset = true;
         ResetPrestage();
         ResetIcons();
@@ -205,7 +205,7 @@ internal sealed partial class MapMarkers
     {
         if (_jobPos >= 0 && _jobExtra) Enqueue(_jobScene);   // a prestage push cut short → redo it later
         _sticky.Clear();
-        _jobPos = -1; _dispatchPending = false;
+        _jobPos = -1; _dispatchPending = false; _dispatchCurrent = false;
         _needSetCur = true;
         ResetIcons();
         _viewedScene = 0;
@@ -244,26 +244,33 @@ internal sealed partial class MapMarkers
             if (Call("__atlas_msetcur(" + scene.ToString(CultureInfo.InvariantCulture) + ")")) _needSetCur = false;
             return;
         }
-        // The current scene first (Select); when it has nothing to do this tick, the other scenes are prestaged.
-        if (!TickCurrent(scene, dataReady, py, mask, model, live, opened, now)) TickPrestage(now, mask);
+        // The current scene first (Select); when it has nothing to do this tick, the other scenes are prestaged — but
+        // only once the current scene has settled (MapMarkers.Prestage.cs Settle): no index fetch, load, build or push
+        // of another scene may hold the network gate or a tick while the current scene's flags are still on their way.
+        if (TickCurrent(scene, dataReady, py, mask, model, live, opened, now)) return;
+        if (!_curSettled && now >= _settleBy) Settle(now, "timeout");
+        if (_curSettled) TickPrestage(now, mask);
     }
 
     private bool TickCurrent(int scene, bool dataReady, float py, int mask, NearestModel model, Dictionary<long, LiveEnt> live,
         OpenedStore opened, float now)
     {
-        if (!dataReady || now - _lastSelectAt < SelectGap || now < _filterHoldUntil) return false;
+        if (!dataReady) return false;
+        // The first select after a scene change / login skips both gaps (they pace re-pushes, not the first one).
+        if (_curSettled && (now - _lastSelectAt < SelectGap || now < _filterHoldUntil)) return false;
         // Re-selected every SelectGap (one pass over the scene's points + a sort of a few thousand longs, sub-ms, no
         // Lua); pushed only when the set (ids + chips) changed AND the last map rebuild is ≥ DispatchGap ago — changes
         // inside the gap are picked up by a later select (coalesced).
         _lastSelectAt = now;
-        if (now - _lastDispatchAt < DispatchGap) return false;
+        if (_curSettled && now - _lastDispatchAt < DispatchGap) return false;
         Select(scene, py, mask, model, live, opened);
-        if (_jobSig == _lastSig) { _job.Clear(); return false; }
+        if (_jobSig == _lastSig) { _job.Clear(); Settle(now, "unchanged"); return false; }
         // Nothing to show and nothing of ours on the maps (e.g. every chip off — the new-character default): leave the
         // game's maps untouched, no push and no rebuild. If flags were pushed earlier, the empty set goes out once to clear.
         if (_job.Count == 0 && CurCommittedCount() == 0)
         {
             _lastSig = _jobSig; _lastSigAll = _jobSigAll;
+            Settle(now, "nothing to show");
             return false;
         }
         if (_jobSigAll == _lastSigAll && AllCommitted(_job))
@@ -271,7 +278,7 @@ internal sealed partial class MapMarkers
             // only hides changed (nothing un-hidden that the maps don't already have) → hide / show those units in place;
             // rebuild only once a minute for this alone. An un-hide of a point dropped by an earlier push is a real change.
             SuppressIcons(_jobHidden);
-            if (now - _lastDispatchAt < HideDispatchGap) { _job.Clear(); return false; }
+            if (now - _lastDispatchAt < HideDispatchGap) { _job.Clear(); Settle(now, "hides only"); return false; }
         }
         _jobScene = scene;
         _jobExtra = false;
@@ -291,6 +298,7 @@ internal sealed partial class MapMarkers
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         Call("__atlas_mdispatch()");
         Slow("map refresh dispatch (" + _paths.Length.ToString(CultureInfo.InvariantCulture) + " flags)", t0);
+        if (_dispatchCurrent) { _dispatchCurrent = false; Settle(_nowForDispatch, "dispatched"); }
     }
 
     private void PushStep()
@@ -320,6 +328,7 @@ internal sealed partial class MapMarkers
         _jobPos = -1;
         if (_jobExtra) { if (CommittedStaged(_jobScene)) _dispatchPending = true; return; }   // silent unless on screen
         _dispatchPending = true;
+        _dispatchCurrent = true;
         _lastSig = _jobSig;
         _lastSigAll = _jobSigAll;
         CommittedCurrent(_jobScene);

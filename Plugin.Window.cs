@@ -42,7 +42,7 @@ public sealed partial class Plugin
     private HeadKind CurrentHead()
     {
         if (_scene <= 0) return HeadKind.Idle;
-        if (!_fetchedOnce) return HeadKind.Loading;
+        if (!_fetchedOnce || _fetchState == AtlasClient.FetchState.Cached) return HeadKind.Loading;
         return _fetchState switch
         {
             AtlasClient.FetchState.Synced  => HeadKind.Synced,

@@ -117,7 +117,26 @@ public sealed partial class Plugin
         _fetchedOnce = false;
         _fetchedUnix = 0;
         _statusKey = null;
-        if (scene > 0) Fetch();
+        if (scene > 0) { LoadCachedFirst(scene); Fetch(); }
+    }
+
+    // Login / scene change (in-game 2026-11-23: "markers shown after 26352 ms" at login — the server fetch queued
+    // behind the prestage index + loads on the client's one-request gate): the disk copy goes up at once, so the
+    // flags are pushed without waiting for the network; the server's answer (Fetch) replaces it, and the map is
+    // pushed again only if the shown set differs. Ignored once the server answered first.
+    private void LoadCachedFirst(int scene)
+    {
+        _client.LoadCached(scene, res =>
+        {
+            if (res.Scene != _scene || _fetchedOnce || res.State != AtlasClient.FetchState.Cached) return;
+            _fetchState = res.State;
+            _fetchedOnce = true;
+            _fetchedUnix = res.FetchedUnix;
+            _model.SetPoints(res.Points);
+            _statusKey = null;
+            RecomputeNearest();
+            _services.Log.Info($"[Atlas] scene {res.Scene}: {res.Points.Length} points (disk cache, server check pending)");
+        });
     }
 
     // Disk cache first + conditional GET on the worker; the result lands back here on the main thread.
