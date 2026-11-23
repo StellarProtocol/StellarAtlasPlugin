@@ -12,6 +12,10 @@ namespace Stellar.Atlas;
 //
 // Matching: by uuid (stable per physical chest), and — for server rows that don't carry a uuid yet (questlog seeds) — by
 // position: same scene, chest chip, within MatchRadius on (x, z).
+//
+// "Not here for this character" (2026-11-23): server CHEST points this character stood near while the game showed no
+// chest there (Plugin.Absent.cs) — almost always chests opened before Atlas was installed. Lines "A scene pointId x z";
+// matched by server point id. Local only, never reported to the server.
 internal sealed class OpenedStore
 {
     private const float MatchRadius = 3f;
@@ -21,6 +25,8 @@ internal sealed class OpenedStore
     private readonly AtlasClient _io;
     private readonly List<Entry> _all = new();
     private readonly HashSet<long> _uuids = new();
+    private readonly List<Entry> _absent = new();      // Uuid field holds the SERVER POINT id
+    private readonly HashSet<long> _absentIds = new();
     private readonly List<Entry> _scene = new();   // entries of the current scene (the per-refresh position check)
     private long _charId;
     private int _sceneId;
@@ -35,17 +41,20 @@ internal sealed class OpenedStore
     {
         if (charId == _charId) return;
         _charId = charId;
-        _all.Clear(); _uuids.Clear();
+        _all.Clear(); _uuids.Clear(); _absent.Clear(); _absentIds.Clear();
         if (charId != 0 && _io.ReadFile(FileName(charId)) is { } bytes)
         {
             foreach (var line in Encoding.UTF8.GetString(bytes).Split('\n'))
             {
                 var p = line.Trim().Split(' ');
+                bool absent = p.Length >= 5 && p[0] == "A";
+                if (absent) p = p[1..];
                 if (p.Length < 4) continue;
                 if (!int.TryParse(p[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int s)
                     || !long.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out long u)
                     || !float.TryParse(p[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float x)
                     || !float.TryParse(p[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float z)) continue;
+                if (absent) { _absent.Add(new Entry { Scene = s, Uuid = u, X = x, Z = z }); _absentIds.Add(u); continue; }
                 _all.Add(new Entry { Scene = s, Uuid = u, X = x, Z = z });
                 _uuids.Add(u);
             }
@@ -69,13 +78,29 @@ internal sealed class OpenedStore
         _all.Add(e);
         if (scene == _sceneId) _scene.Add(e);
         Version++;
-        var sb = new StringBuilder(_all.Count * 32);
-        foreach (var a in _all)
-            sb.Append(a.Scene.ToString(CultureInfo.InvariantCulture)).Append(' ').Append(a.Uuid.ToString(CultureInfo.InvariantCulture))
-              .Append(' ').Append(a.X.ToString("0.##", CultureInfo.InvariantCulture)).Append(' ')
-              .Append(a.Z.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
+        Save();
+    }
+
+    public void AddAbsent(int scene, long pointId, float x, float z)
+    {
+        if (_charId == 0 || pointId == 0 || !_absentIds.Add(pointId)) return;
+        _absent.Add(new Entry { Scene = scene, Uuid = pointId, X = x, Z = z });
+        Version++;
+        Save();
+    }
+
+    private void Save()
+    {
+        var sb = new StringBuilder((_all.Count + _absent.Count) * 34);
+        foreach (var a in _all) Line(sb, "", a);
+        foreach (var a in _absent) Line(sb, "A ", a);
         _io.WriteFileAsync(FileName(_charId), Encoding.UTF8.GetBytes(sb.ToString()));
     }
+
+    private static void Line(StringBuilder sb, string prefix, Entry a) =>
+        sb.Append(prefix).Append(a.Scene.ToString(CultureInfo.InvariantCulture)).Append(' ').Append(a.Uuid.ToString(CultureInfo.InvariantCulture))
+          .Append(' ').Append(a.X.ToString("0.##", CultureInfo.InvariantCulture)).Append(' ')
+          .Append(a.Z.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
 
     public bool HasUuid(long uuid) => uuid != 0 && _uuids.Contains(uuid);
 
@@ -83,6 +108,7 @@ internal sealed class OpenedStore
     // an opened chest. The scene list is tiny (chests opened here by this character), so the scan is cheap.
     public bool Matches(AtlasPoint p)
     {
+        if (_absentIds.Contains(p.Id)) return true;
         if (p.Uuid != 0) return _uuids.Contains(p.Uuid);
         if (!AtlasGroups.IsChest(p.Chip) || _scene.Count == 0) return false;
         foreach (var e in _scene)

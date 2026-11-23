@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using UnityEngine;
 using UnityEngine.UI;
@@ -7,81 +8,97 @@ using UnityEngine.UI;
 namespace Stellar.Atlas;
 
 // Icon pass: the game draws our flags with a placeholder game sprite (ui/atlas/npc/talk_icon_box); we swap each unit's
-// icon for our own rarity tile (Resources/map, tools/make-map-icons.py) after the map builds it. Validated path
-// (Auto-Gather-and-Interaction.md "Rarity colour"): unit `positionFlagName<Id>/node_parent/img_icon` (UI.Image) under
+// icon for our own rarity tile (Resources/map, tools/make-map-icons.py). Validated path (Auto-Gather-and-Interaction.md
+// "Rarity colour"): unit `positionFlagName<Id>/node_parent/img_icon` (UI.Image) under
 //   big map  zuiroot/UILayerFunc/map_main_pc(Clone)/anim/scrollview_map/node_viewport/rimg_map_bg/node_area_map/node_flags
 //   minimap  …/main_minimap_sub_pc(Clone)/group_minimap/img_frame/mask/node_map_parent/rimg_map_bg/node_flags
 // The same unit names exist under BOTH roots (GameObject.Find(name) would hit the minimap first) → search per root.
 //
-// When: units are rebuilt asynchronously (and pooled) on every RefreshMap, whose only data source is our wrapper — so
-// the wrapper bumps _G.__atlas_mapgen. The 2 Hz Poll reads that one number; only when it changed does it run a few
-// passes (PassesPerRefresh, ≤ PassBudget lookups each) that fill units not yet carrying our tile. A unit already showing
-// our tile is skipped without a lookup; one that lost it (pooled + reused) is looked up again BY NAME, so a tile can't
-// stick to a unit that now belongs to another flag. Idle cost: one Lua number read per poll.
+// When (fix 2026-11-23: a pass only after each "map rebuilt" bump missed 14/117 units created async later): EVERY 2 Hz
+// poll, for each map root that is active, sweep a round-robin slice of our entries (SweepPerPass), within a time budget:
+//   • unit cached + its img_icon.sprite IS our tile → nothing (one reference compare);
+//   • cached but the sprite isn't ours (pooled unit reused / re-initialised) → look it up again BY NAME and re-apply;
+//   • not found → retry after MissBackoff passes (a far point may have no minimap unit at all), or at once after the
+//     game rebuilt its flags (_G.__atlas_mapgen changed).
+// Steady cost: ≤ SweepPerPass reference compares per active root per poll, lookups only for units that changed.
 //
-// Sprites: Texture2D.LoadImage → Sprite.Create once per chip, both HideAndDontSave (WindowBuilder-Patterns "Scene-switch
-// crash audit": a sprite held only by a C# cache is swept by UnloadUnusedAssets otherwise), re-validated with Unity's
-// == null. If assigning our sprite throws, fall back to TINTING the game's white placeholder with the chip colour
-// (the validated look), logged once.
+// Sprites: Texture2D.LoadImage → Sprite.Create, at most ONE new tile per pass (spreads the decode), both HideAndDontSave
+// (WindowBuilder-Patterns "Scene-switch crash audit"), re-validated with Unity's == null. If assigning our sprite throws,
+// fall back to TINTING the game's white placeholder with the chip colour (the validated look), logged once.
 internal sealed partial class MapMarkers
 {
-    private const int PassesPerRefresh = 4;
-    private const int PassBudget       = 150;
+    private const int    SweepPerPass = 100;
+    private const int    FindBudget   = 40;
+    private const int    MissBackoff  = 6;      // passes (≈3 s at 2 Hz)
+    private const double PassBudgetMs = 3.0;
     private const string BigRootPath  = "zuiroot/UILayerFunc/map_main_pc(Clone)/anim/scrollview_map/node_viewport/rimg_map_bg/node_area_map/node_flags";
     private const string MiniHostName = "main_minimap_sub_pc(Clone)";
     private const string MiniRootRel  = "group_minimap/img_frame/mask/node_map_parent/rimg_map_bg/node_flags";
     private static readonly int[] TileSizes = { 32, 42, 64, 96 };
 
+    private sealed class RootState
+    {
+        public Image?[] Cache = Array.Empty<Image?>();
+        public int[] RetryAt = Array.Empty<int>();
+        public int Cursor;
+        public void Reset(int n) { Cache = new Image?[n]; RetryAt = new int[n]; Cursor = 0; }
+        public void ClearMisses() { Array.Clear(RetryAt, 0, RetryAt.Length); }
+    }
+
     private string[] _paths = Array.Empty<string>();
     private Chip[] _chips = Array.Empty<Chip>();
-    private Image?[] _bigCache = Array.Empty<Image?>(), _miniCache = Array.Empty<Image?>();
+    private readonly RootState _big = new(), _mini = new();
     private readonly Sprite?[] _sprites = new Sprite?[AtlasGroups.ChipCount];
     private readonly Texture2D?[] _textures = new Texture2D?[AtlasGroups.ChipCount];
     private Transform? _miniRoot;
     private float _miniResolveAt = -100f;
     private double _mapGen = -1;
-    private int _passesLeft;
-    private bool _tintFallback;
+    private int _pass;
+    private bool _tintFallback, _createdThisPass;
 
     private void CommitIcons(List<Entry> job)
     {
         int n = job.Count;
         _paths = new string[n];
         _chips = new Chip[n];
-        _bigCache = new Image?[n];
-        _miniCache = new Image?[n];
         for (int i = 0; i < n; i++)
         {
             _paths[i] = "positionFlagName" + (IdBase + job[i].N).ToString(CultureInfo.InvariantCulture) + "/node_parent/img_icon";
             _chips[i] = job[i].Chip;
         }
-        _passesLeft = PassesPerRefresh;
+        _big.Reset(n);
+        _mini.Reset(n);
     }
 
     private void ResetIcons()
     {
         _paths = Array.Empty<string>();
         _chips = Array.Empty<Chip>();
-        _bigCache = Array.Empty<Image?>();
-        _miniCache = Array.Empty<Image?>();
-        _passesLeft = 0;
+        _big.Reset(0);
+        _mini.Reset(0);
     }
 
     // 2 Hz (world-ready).
     public void PollIcons(float now)
     {
         if (!_installed || _paths.Length == 0) return;
-        if (Lua.TryReadGlobalNumber("__atlas_mapgen", out double gen) && gen != _mapGen) { _mapGen = gen; _passesLeft = PassesPerRefresh; }
-        if (_passesLeft <= 0) return;
-        _passesLeft--;
+        _pass++;
+        _createdThisPass = false;
+        if (Lua.TryReadGlobalNumber("__atlas_mapgen", out double gen) && gen != _mapGen)
+        {
+            _mapGen = gen;
+            _big.ClearMisses(); _mini.ClearMisses();   // fresh units exist now → look again at once
+        }
+        long t0 = Stopwatch.GetTimestamp();
         try
         {
             var big = GameObject.Find(BigRootPath);   // null while the big map is closed (Find skips inactive objects)
-            if (big != null) Pass(big.transform, _bigCache);
+            if (big != null) Pass(big.transform, _big, t0);
             var mini = MiniRoot(now);
-            if (mini != null) Pass(mini, _miniCache);
+            if (mini != null) Pass(mini, _mini, t0);
         }
-        catch (Exception ex) { WarnOnce(ref _passWarned, "map icon pass failed: " + ex.Message); _passesLeft = 0; }
+        catch (Exception ex) { WarnOnce(ref _passWarned, "map icon pass failed: " + ex.Message); }
+        Slow("icon pass", t0);
     }
     private bool _passWarned;
 
@@ -91,25 +108,33 @@ internal sealed partial class MapMarkers
         if (_miniRoot != null && _miniRoot.gameObject.activeInHierarchy) return _miniRoot;
         if (now - _miniResolveAt < 10f) return null;
         _miniResolveAt = now;
+        long t0 = Stopwatch.GetTimestamp();
         var host = GameObject.Find(MiniHostName);
         _miniRoot = host != null ? host.transform.Find(MiniRootRel) : null;
+        Slow("minimap root lookup", t0);
         return _miniRoot;
     }
 
-    private void Pass(Transform root, Image?[] cache)
+    private void Pass(Transform root, RootState st, long t0)
     {
         if (!root.gameObject.activeInHierarchy) return;
-        int lookups = 0;
-        for (int i = 0; i < _paths.Length && lookups < PassBudget; i++)
+        int n = _paths.Length, finds = 0;
+        for (int k = 0; k < SweepPerPass && k < n; k++)
         {
+            if (finds >= FindBudget || ElapsedMs(t0) > PassBudgetMs) return;   // the cursor keeps our place
+            int i = st.Cursor;
+            st.Cursor = (st.Cursor + 1) % n;
             var sprite = Tile(_chips[i]);
-            var img = cache[i];
+            if (sprite == null && !_tintFallback) continue;   // tile not decoded yet (one per pass) → next pass
+            var img = st.Cache[i];
             if (img != null && Looks(img, sprite, _chips[i])) continue;
-            lookups++;
+            if (img == null && _pass < st.RetryAt[i]) continue;
+            finds++;
             var t = root.Find(_paths[i]);
             img = t != null ? t.GetComponent<Image>() : null;
-            cache[i] = img;
-            if (img != null) Apply(img, sprite, _chips[i]);
+            st.Cache[i] = img;
+            if (img == null) { st.RetryAt[i] = _pass + MissBackoff; continue; }
+            Apply(img, sprite, _chips[i]);
         }
     }
 
@@ -138,7 +163,9 @@ internal sealed partial class MapMarkers
         int c = (int)chip;
         var s = _sprites[c];
         if (s != null && _textures[c] != null) return s;
-        if (_tintFallback) return null;
+        if (_tintFallback || _createdThisPass) return null;
+        _createdThisPass = true;
+        long t0 = Stopwatch.GetTimestamp();
         try
         {
             var png = LoadTilePng(AtlasGroups.MapIconStem(chip));
@@ -158,6 +185,7 @@ internal sealed partial class MapMarkers
             _services.Log.Warning("[Atlas] map icon sprite could not be created — tinting the game icon instead: " + ex.Message);
             return null;
         }
+        finally { Slow("tile decode", t0); }
     }
 
     // The unit is ~42 px at 1440p → the bitmap pre-drawn for the current screen height, else the next larger.
@@ -188,4 +216,21 @@ internal sealed partial class MapMarkers
     }
 
     private static Color ToColor(Stellar.Abstractions.Domain.ColorRgba c) => new(c.R, c.G, c.B, 1f);
+
+    // ── slow-step log (the [Hitch] 137 ms hunt) ───────────────────────────────────────────────────────────────────
+    // Two Stopwatch reads per step (steps run a few times a second at most, not per frame); a step over SlowMs is
+    // logged with its name, at most MaxSlowLogs times a session, so the next in-game run shows where the time went.
+    private const double SlowMs = 4.0;
+    private const int MaxSlowLogs = 30;
+    private int _slowLogs;
+
+    private static double ElapsedMs(long t0) => (Stopwatch.GetTimestamp() - t0) * 1000.0 / Stopwatch.Frequency;
+
+    private void Slow(string what, long t0)
+    {
+        double ms = ElapsedMs(t0);
+        if (ms <= SlowMs || _slowLogs >= MaxSlowLogs) return;
+        _slowLogs++;
+        _services.Log.Warning($"[Atlas] slow map step: {what} {ms:F1} ms");
+    }
 }

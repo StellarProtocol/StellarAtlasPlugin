@@ -28,7 +28,7 @@ internal sealed partial class MapMarkers
 {
     private const int   MapCap         = 300;
     private const int   BatchSize      = 25;
-    private const int   BatchesPerTick = 2;
+    private const int   BatchesPerTick = 1;
     private const float MinPushGap     = 3f;
     private const long  IdBase         = 90000000000000L;
     private const long  LiveIdBase     = 600000000L;   // server point ids are assumed < 600 000 000
@@ -69,6 +69,8 @@ internal sealed partial class MapMarkers
         " rawset(_G,'__atlas_mcommit',function(sid)" +
         " local m = {} if sid ~= nil then m[sid] = rawget(_G,'__atlas_stage') or {} end" +
         " rawset(_G,'__atlas_map', m) rawset(_G,'__atlas_stage', nil)" +
+        " end)" +
+        " rawset(_G,'__atlas_mdispatch',function()" +
         " pcall(function() Z.EventMgr:Dispatch(Z.ConstValue.MapFlagShowListChanged) end)" +
         " end)" +
         " rawset(_G,'__atlas_mrestore',function()" +
@@ -105,6 +107,7 @@ internal sealed partial class MapMarkers
     // the job being pushed / the set last committed
     private readonly List<Entry> _job = new(MapCap);
     private int _jobPos = -1, _jobScene;
+    private bool _dispatchPending, _installedThisTick;
     private ulong _jobSig, _lastSig;
     private float _lastPushAt = -100f;
     private readonly StringBuilder _sb = new(4096);
@@ -131,29 +134,36 @@ internal sealed partial class MapMarkers
         return Lua.TryReadGlobalBool("__atlas_has", out has) && has;
     }
 
-    private bool EnsureInstalled()
+    private bool EnsureInstalled(float now)
     {
         if (_installed) return true;
+        if (now < _installRetryAt) return false;   // map VM not there yet → ask again in 5 s, not every tick
+        _installRetryAt = now + 5f;
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         if (!Call("__atlas_minstall()")) return false;
+        Slow("install", t0);
+        _installedThisTick = true;
         _installed = Lua.TryReadGlobalBool("__at_mok", out var ok) && ok;
         if (!_installed) WarnOnce(ref _installWarned, "map VM not ready — markers wait");
         else _services.Log.Info("[Atlas] map markers installed");
         return _installed;
     }
     private bool _installWarned;
+    private float _installRetryAt;
 
     // Logout: the next login may bring a fresh Lua state.
     public void OnLogout()
     {
         _defined = _installed = false;
-        _jobPos = -1; _lastSig = 0;
+        _installRetryAt = 0f;
+        _jobPos = -1; _lastSig = 0; _dispatchPending = false;
         ResetIcons();
     }
 
     // Scene change: drop what is shown; the next Sync pushes the new scene once its points arrive.
     public void OnScene()
     {
-        _jobPos = -1; _lastSig = 0;
+        _jobPos = -1; _lastSig = 0; _dispatchPending = false;
         ResetIcons();
     }
 
@@ -170,9 +180,13 @@ internal sealed partial class MapMarkers
         OpenedStore opened, float now)
     {
         if (scene <= 0) return;
+        // Hitch fix (2026-11-23, [Hitch] stellar.atlas=137.5 ms once after the first push): every Lua step gets its own
+        // tick — define/install, each batch, the commit, and the map refresh dispatch — and each is timed (Slow()).
+        _installedThisTick = false;
+        if (_dispatchPending) { Dispatch(); return; }
         if (_jobPos >= 0) { PushStep(); return; }
+        if (!EnsureInstalled(now) || _installedThisTick) return;   // install (prewarm) on its own tick, ahead of any push
         if (now - _lastPushAt < MinPushGap) return;
-        if (!EnsureInstalled()) return;
         // Re-selected every MinPushGap (one pass over the scene's points + a sort of ≤ a few thousand floats ≈ sub-ms);
         // pushed only when the nearest-MapCap set (ids + chips) actually changed — e.g. the player walked far enough.
         _lastPushAt = now;
@@ -180,12 +194,24 @@ internal sealed partial class MapMarkers
         if (_jobSig == _lastSig) { _job.Clear(); return; }
         _jobScene = scene;
         _jobPos = 0;
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         if (!Call("__atlas_mstage()")) { _jobPos = -1; return; }
-        PushStep();
+        Slow("select + stage", t0);
+    }
+
+    // The game rebuilds BOTH maps' flag lists synchronously inside this Dispatch (RefreshMap → our wrapper → ~MapCap
+    // tables); that cost is the game's, but it lands in our call, so it runs alone on its own tick.
+    private void Dispatch()
+    {
+        _dispatchPending = false;
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        Call("__atlas_mdispatch()");
+        Slow("map refresh dispatch (" + _paths.Length.ToString(CultureInfo.InvariantCulture) + " flags)", t0);
     }
 
     private void PushStep()
     {
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         for (int b = 0; b < BatchesPerTick && _jobPos < _job.Count; b++)
         {
             var sb = _sb.Clear().Append("__atlas_mpush(");
@@ -203,8 +229,10 @@ internal sealed partial class MapMarkers
             if (!Call(sb.ToString())) { _jobPos = -1; return; }
             _jobPos = end;
         }
+        Slow("push batch", t0);
         if (_jobPos < _job.Count) return;
         Call("__atlas_mcommit(" + _jobScene.ToString(CultureInfo.InvariantCulture) + ")");
+        _dispatchPending = true;
         _lastSig = _jobSig;
         CommitIcons(_job);   // MapMarkers.Icons.cs: the unit names + chips the icon pass looks for
         _jobPos = -1;

@@ -35,6 +35,7 @@ internal sealed partial class AtlasClient : IDisposable
     {
         public ReportStatus Status;
         public string? NewInstallId, NewInstallSecret;   // set when this job registered the install
+        public int Accepted, Rejected;                   // per observation, from the 200 body's "seen" array
     }
 
     private const string CachePrefix = "points/";

@@ -33,6 +33,7 @@ internal sealed class ReportQueue
     private readonly Func<float> _now;
     private readonly Func<(string Id, string Secret)> _getCreds;
     private readonly Action<string, string> _setCreds;
+    private readonly Action<string> _info;
     private readonly List<Obs> _pending = new();
     private readonly HashSet<long> _queued = new();   // session dedupe
     private readonly StringBuilder _sb = new(2048);
@@ -40,9 +41,10 @@ internal sealed class ReportQueue
     private int _inFlight, _reRegisters;
     private bool _stopped;
 
-    public ReportQueue(AtlasClient client, Func<float> now, Func<(string, string)> getCreds, Action<string, string> setCreds)
+    public ReportQueue(AtlasClient client, Func<float> now, Func<(string, string)> getCreds, Action<string, string> setCreds,
+        Action<string> info)
     {
-        _client = client; _now = now; _getCreds = getCreds; _setCreds = setCreds;
+        _client = client; _now = now; _getCreds = getCreds; _setCreds = setCreds; _info = info;
     }
 
     public int Pending => _pending.Count;
@@ -92,12 +94,16 @@ internal sealed class ReportQueue
         var body = Encoding.UTF8.GetBytes(sb.ToString());
         var creds = _getCreds();
         _inFlight++;
-        _client.PostReport(body, creds.Id, creds.Secret, outcome => OnOutcome(outcome, sent));
+        _client.PostReport(body, creds.Id, creds.Secret, outcome => OnOutcome(outcome, sent, scene));
     }
 
-    private void OnOutcome(AtlasClient.ReportOutcome o, List<long> sent)
+    private void OnOutcome(AtlasClient.ReportOutcome o, List<long> sent, int scene)
     {
         _inFlight--;
+        if (o.Status == AtlasClient.ReportStatus.Ok)
+            _info($"[Atlas] reports sent {sent.Count} (scene {scene}: ok={o.Accepted}, rejected={o.Rejected})");
+        else if (o.Status == AtlasClient.ReportStatus.Drop)
+            _info($"[Atlas] reports dropped {sent.Count} (scene {scene}: the server refused the batch)");
         if (o.NewInstallId != null && o.NewInstallSecret != null) _setCreds(o.NewInstallId, o.NewInstallSecret);
         float now = _now();
         switch (o.Status)

@@ -46,6 +46,12 @@ internal sealed partial class EntityScanner
     public Vector3 PlayerPos;
     public bool HasPlayerPos;
 
+    // Consecutive complete walks since the last reset (scene change / logout / a failed poll). "Healthy" = the walk is
+    // bound, the player position reads, and the live set has had >= 2 s to stream in: the absent-chest heuristic
+    // (Plugin.Absent.cs) must never conclude "no chest here" from an empty or broken walk.
+    public int GoodPolls { get; private set; }
+    public bool Healthy => GoodPolls >= 4 && HasPlayerPos;
+
     // Raised synchronously inside Poll (main thread). O(1) handlers only.
     public Action<LiveEnt>? Appeared;   // a NEW tracked entity with a position
     public Action<LiveEnt>? Opened;     // a tracked chest this character just opened
@@ -59,6 +65,7 @@ internal sealed partial class EntityScanner
     {
         _live.Clear();
         HasPlayerPos = false;
+        GoodPolls = 0;
     }
 
     // Player position only (5 Hz path — guide arrival + list distances between walks).
@@ -81,15 +88,15 @@ internal sealed partial class EntityScanner
     // 2 Hz walk.
     public void Poll()
     {
-        if (!EnsureApi()) return;
+        if (!EnsureApi()) { GoodPolls = 0; return; }
         try
         {
             var mgr = _getMgr!();
-            if (mgr == null) return;
+            if (mgr == null) { GoodPolls = 0; return; }
             var dict = _getDict != null ? _getDict(mgr) : _piEntityDict!.GetValue(mgr);
-            if (dict == null) return;
+            if (dict == null) { GoodPolls = 0; return; }
             if (!_walkResolved) ResolveKeyWalk(dict);
-            if (_enumCurFn == null) return;
+            if (_enumCurFn == null) { GoodPolls = 0; return; }
             ReadPlayer();
 
             _seq++;
@@ -130,8 +137,9 @@ internal sealed partial class EntityScanner
                 if (e.Flipped && AtlasGroups.IsChest(e.Chip) && e.Dist >= 0f && e.Dist <= OpenedRadius) Opened?.Invoke(e);
             }
             _gone.Clear();
+            GoodPolls++;
         }
-        catch (Exception ex) { WarnOnce(ref _pollErrLogged, "poll error: " + (ex.InnerException?.Message ?? ex.Message)); }
+        catch (Exception ex) { GoodPolls = 0; WarnOnce(ref _pollErrLogged, "poll error: " + (ex.InnerException?.Message ?? ex.Message)); }
     }
     private bool _pollErrLogged;
 

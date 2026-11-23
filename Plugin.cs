@@ -64,7 +64,7 @@ public sealed partial class Plugin : IStellarPlugin
         _opened  = new OpenedStore(_client);
         _model   = new NearestModel(_lua);
         _map     = new MapMarkers(services);
-        _reports = new ReportQueue(_client, () => _services.Framework.TimeNow, GetInstall, SetInstall);
+        _reports = new ReportQueue(_client, () => _services.Framework.TimeNow, GetInstall, SetInstall, m => _services.Log.Info(m));
         _scanner.Appeared = OnLiveAppeared;
         _scanner.Opened   = OnLiveOpened;
         _loc.LanguageChanged += OnLanguageChanged;

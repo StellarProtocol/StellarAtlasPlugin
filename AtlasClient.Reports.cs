@@ -64,6 +64,7 @@ internal sealed partial class AtlasClient
             req.Headers.TryAddWithoutValidation(HeaderSignature, sig);
             using var resp = await _http.SendAsync(req).ConfigureAwait(false);
             outcome.Status = Classify(resp.StatusCode);
+            if (outcome.Status == ReportStatus.Ok) CountResults(await resp.Content.ReadAsByteArrayAsync().ConfigureAwait(false), outcome);
             if (outcome.Status != ReportStatus.Ok)
                 _services.Log.Warning($"[Atlas] report → HTTP {(int)resp.StatusCode} ({outcome.Status})");
         }
@@ -113,6 +114,19 @@ internal sealed partial class AtlasClient
         }
         catch (Exception ex) { _services.Log.Warning($"[Atlas] install registration failed: {ex.GetType().Name}: {ex.Message}"); }
         return o;
+    }
+
+    // 200 {"seen":[{"point_id":812}|{"point_id":9001,"created":true}|{"error":"…"}], …} → accepted / rejected counts.
+    private static void CountResults(byte[] body, ReportOutcome o)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("seen", out var seen) || seen.ValueKind != JsonValueKind.Array) return;
+            foreach (var e in seen.EnumerateArray())
+                if (e.ValueKind == JsonValueKind.Object && e.TryGetProperty("error", out _)) o.Rejected++; else o.Accepted++;
+        }
+        catch { }
     }
 
     internal static string Sign(string secret, string method, string path, string ts, string nonce, byte[] body)

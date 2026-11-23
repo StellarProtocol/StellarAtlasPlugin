@@ -6,6 +6,11 @@ Redrawn PER SIZE (house icon rule, Stellar-Design-Language.md section 3 — neve
 whole number of pixels on pixel boundaries, glyph rectangles snap to the pixel grid, curves stay anti-aliased (rendered
 at 16x and box-filtered — never crispEdges). Coordinate maths uses floor(v + 0.5), never round() (banker's rounding).
 
+Visible square: the game's flora icon (mapicon_collect_unlock) leaves transparent margin around its art, and a
+full-bleed tile drew ~1.45x bigger than it in game (2026-11-23). So the tile is drawn INSIDE the PNG at VISIBLE = 1/1.45
+of the side, centred, with transparent padding (the unit's RectTransform stays untouched); the inner side is snapped
+so the margin is a whole number of pixels on each side.
+
 Sizes: a map flag unit draws at ~42 px at 1440p (scene-tag IconRawSize default 70x70 design units) → 32 (1080p),
 42 (1440p), 64 (1600p-ish / spare), 96 (4K). The plugin picks the next larger for the current screen height.
 
@@ -50,11 +55,25 @@ def rgb(c: int):
     return ((c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff, 255)
 
 
+VISIBLE = 1 / 1.45
+
+
 def draw(size: int, fill: int, glyph: str) -> Image.Image:
+    inner = rnd(size * VISIBLE)
+    if (size - inner) % 2:
+        inner += 1                                  # equal whole-pixel margins
+    tile = draw_tile(inner, fill, glyph)
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    off = (size - inner) // 2
+    out.alpha_composite(tile, (off, off))
+    return out
+
+
+def draw_tile(size: int, fill: int, glyph: str) -> Image.Image:
     S = size * SS
     im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    b = max(2, rnd(size / 21))                      # border: 2 px up to 42, 3 at 64, 5 at 96
+    b = max(2, rnd(size / 21))                      # border: 2 px up to ~52 px of tile, 3 above
     r = size * 5 / 32
     d.rounded_rectangle([0, 0, S - 1, S - 1], radius=r * SS, fill=BORDER)
     d.rounded_rectangle([b * SS, b * SS, S - 1 - b * SS, S - 1 - b * SS], radius=max(1.0, r - b) * SS, fill=rgb(fill))

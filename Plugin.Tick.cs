@@ -69,6 +69,8 @@ public sealed partial class Plugin
     {
         if (!WorldReady() || _scene <= 0) return;
         _scanner.Poll();
+        TickSharingEdge();
+        TickAbsent();
         if (Shown || _guide.Active) RecomputeNearest();
         _map.PollIcons(_services.Framework.TimeNow);
     }
@@ -126,6 +128,21 @@ public sealed partial class Plugin
         if (_scene <= 0 || !_scanner.HasPlayerPos) return;
         var p = _scanner.PlayerPos;
         _model.Recompute(p.x, p.y, p.z, _mask, _scanner.Live, _opened);
+    }
+
+    // Reports were only queued from the scanner's Appeared event, so everything already in range when sharing became
+    // active (the player pressed "OK, share" with chests in view) was never sent (in-game 2026-11-23: server had 0
+    // reports). On the rising edge of SharingActive — consent, the Share chip, or the first world tick of a session that
+    // already consented — queue every tracked live entity once (the queue still dedupes per uuid per session).
+    private bool _wasSharing;
+
+    private void TickSharingEdge()
+    {
+        bool active = SharingActive;
+        if (active && !_wasSharing)
+            foreach (var e in _scanner.Live.Values)
+                if (e.Tracked && e.HasPos && !_opened.HasUuid(e.Uuid)) _reports.Enqueue(_scene, e);
+        _wasSharing = active;
     }
 
     // ── scanner events (2 Hz poll, main thread, O(1)) ─────────────────────────────────────────────────────────────
