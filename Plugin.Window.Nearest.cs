@@ -8,12 +8,12 @@ namespace Stellar.Atlas;
 // NEAREST panel: exactly 8 reserved rows (R14), 26 px tiles + 2 px gap (R15), nearest first —
 //   [dot] [name ……] [source] [compass word] [58 m]
 // source = "Seen live" (green) / "Map data" (muted) / "Unverified" (amber). Click = guide there; the guided row = accent
-// 30 % fill + 1 px accent outline. Unused rows are faint empty boxes (2b); nothing known = the first box carries
+// 30 % fill + 1 px accent outline. Unused rows are invisible (the list just ends); nothing known = one full-height box
 // "No chests known here yet. Ones you find are added." (2c); a chest just opened = a green-tinted "Opened" row on top
 // for a moment (2d). Compass words, not arrow glyphs ("→" draws blank, SDL §6).
 //
 // Fixed slots (no VirtualList: the list never scrolls). Each slot is a Conditional over COMPLETE tiles (flash / row /
-// empty message / ghost), because the "Opened" label is bold and bold can't toggle live (SDL §6). The row data is the
+// spacer), because the "Opened" label is bold and bold can't toggle live (SDL §6). The row data is the
 // model's struct array — the Funcs index it; strings come from caches (names: GameLua, distances: _distText).
 public sealed partial class Plugin
 {
@@ -32,46 +32,48 @@ public sealed partial class Plugin
     private bool HasRow(int slot) { int i = RowIndex(slot); return i >= 0 && i < _model.Count; }
     private ref NearestModel.Row RowAt(int slot) => ref _model.Out[Math.Clamp(RowIndex(slot), 0, NearestModel.Rows - 1)];
 
-    // No chip on (the new-character default): one Tile-coloured message box the height of 3 rows (3 × 28 − 2 = 82 px) +
-    // the remaining 5 ghost rows, so the panel keeps exactly the 8-row height (R14).
-    private const int NoneBoxRows = 3;
-    private static readonly float NoneBoxH = NoneBoxRows * ListRowPitch - ListRowGap;
+    // Empty states (user-approved 2026-11-23: no outlined ghost rows): "Nothing shown yet" (no chip on) and "No chests known
+    // here yet…" (nothing to list) are ONE Tile-coloured box filling the whole list area (8 rows incl. gaps, R14), text
+    // centred. With fewer than 8 results the unused slots are invisible spacers: the list just ends, the height stays.
+    private static readonly float ListAreaH = NearestModel.Rows * ListRowPitch - ListRowGap;
 
     private bool NothingShown => (_mask & AtlasGroups.ShownBits) == 0;
+    private bool ListEmpty => _model.Count == 0 && !FlashOn;
 
     private HudElement BuildNearestPanel()
     {
         var rows = new HudElement[NearestModel.Rows];
         for (int s = 0; s < rows.Length; s++) rows[s] = NearestSlot(s);
-        var none = new HudElement[NearestModel.Rows - NoneBoxRows + 1];
-        none[0] = NothingShownTile();
-        for (int s = 1; s < none.Length; s++) none[s] = GhostTile();
         return SectionPanel(() => _loc.T("at.section.nearest"), () => _loc.T("at.hint.nearest"),
             new ConditionalElement(() => NothingShown,
-                new ColumnElement(none, Gap: ListRowGap),
-                new ColumnElement(rows, Gap: ListRowGap)));
+                FullTile(() => _loc.T("at.none.title"), () => _loc.T("at.none.body")),
+                new ConditionalElement(() => ListEmpty,
+                    FullTile(null, () => _loc.T("at.empty")),
+                    new ColumnElement(rows, Gap: ListRowGap))));
     }
 
-    // Bold "Nothing shown yet" over a muted two-line hint, centred in an 82 px Tile box.
-    private HudElement NothingShownTile() => new BubbleElement(new RowElement(new HudElement[]
+    // One box the height of the whole list: optional bold title over a muted line (≤ 2 lines), centred both ways.
+    private HudElement FullTile(Func<string>? title, Func<string> body)
     {
-        new SpacerElement(0f, NoneBoxH),
-        new CellElement(new ColumnElement(new HudElement[]
+        var lines = new List<HudElement>(2);
+        if (title != null)
+            lines.Add(DropBold(new TextElement(title, Color: () => TextColor(), Align: TextAlign.Center,
+                NoWrap: true, FontSize: 13) { Bold = true, Ellipsize = true }));
+        lines.Add(new TextElement(body, Color: () => MutedColor(), Align: TextAlign.Center,
+            FontSize: 12) { RichEmoji = true, MaxLines = 2, Ellipsize = true });
+        return new BubbleElement(new RowElement(new HudElement[]
         {
-            DropBold(new TextElement(() => _loc.T("at.none.title"), Color: () => TextColor(), Align: TextAlign.Center,
-                NoWrap: true, FontSize: 13) { Bold = true, Ellipsize = true }),
-            new TextElement(() => _loc.T("at.none.body"), Color: () => MutedColor(), Align: TextAlign.Center,
-                FontSize: 12) { RichEmoji = true, MaxLines = 2, Ellipsize = true },
-        }, Gap: 4f), Weight: 1f),
-    }, Gap: 0.01f))
-    {
-        FillColorFn = () => Fill(TileColor()), CornerRadius = TileRadius, PaddingX = 12f, PaddingY = 0f,
-    };
+            new SpacerElement(0f, ListAreaH),
+            new CellElement(new ColumnElement(lines, Gap: 4f), Weight: 1f),
+        }, Gap: 0.01f))
+        {
+            FillColorFn = () => Fill(TileColor()), CornerRadius = TileRadius, PaddingX = 16f, PaddingY = 0f,
+        };
+    }
 
     private HudElement NearestSlot(int slot)
     {
-        HudElement rest = new ConditionalElement(() => HasRow(slot), RowTile(slot),
-            slot == 0 ? new ConditionalElement(() => _model.Count == 0 && _scene > 0, EmptyTile(), GhostTile()) : GhostTile());
+        HudElement rest = new ConditionalElement(() => HasRow(slot), RowTile(slot), new SpacerElement(0f, ListTileHeight));
         return slot == 0 ? new ConditionalElement(() => FlashOn, FlashTile(), rest) : rest;
     }
 
@@ -128,21 +130,6 @@ public sealed partial class Plugin
     };
 
     private ColorRgba FlashFill() => Over(SuccessColor() with { A = 0.18f }, PanelColor());
-
-    // Unused slot: a faint ring box of the row's size (the toolkit has no dashed outline → solid faint ring, as in the
-    // AutoGather / EntityInspector empty states).
-    private HudElement GhostTile(HudElement? inner = null) => new BubbleElement(new RowElement(new HudElement[]
-    {
-        new SpacerElement(0f, ListTileHeight - 2f),   // −2: the ring is drawn over the edge, the box keeps the row height
-        new CellElement(inner ?? new SpacerElement(1f, 1f), Weight: 1f),
-    }, Gap: 0.01f))
-    {
-        FillColorFn = () => Transparent, OutlineColorFn = () => Fill(TextColor() with { A = 0.10f }), OutlineWidth = 1f,
-        CornerRadius = TileRadius, PaddingX = 8f, PaddingY = 1f,
-    };
-
-    private HudElement EmptyTile() => GhostTile(new TextElement(() => _loc.T("at.empty"), Color: () => MutedColor(),
-        Align: TextAlign.Center, NoWrap: true, FontSize: 12) { RichEmoji = true, Ellipsize = true });
 
     // ── cell text ─────────────────────────────────────────────────────────────────────────────────────────────────
     private string RowName(int slot)

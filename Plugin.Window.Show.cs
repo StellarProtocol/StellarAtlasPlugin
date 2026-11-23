@@ -4,10 +4,11 @@ using Stellar.Abstractions.Services;
 
 namespace Stellar.Atlas;
 
-// SHOW panel (redesign, user-approved option A 2026-11-23): caption "SHOW" + hint "Click to turn on or off", then two
-// labelled sub-rows, each a fixed 4-column grid of 24 px chips of equal width:
-//   CHESTS                    "<N> on this map"   Common · Epic · Legendary · Other
-//   GATHERING & COLLECTIBLES                      Herbs · Ore · Fishing · Books
+// SHOW panel (option B, user-approved 2026-11-23): caption "SHOW" + hint "Click to turn on or off", then two labelled
+// sub-rows, each a fixed 4-column grid of 24 px chips of equal width:
+//   CHESTS        "<N> on this map"   Common · Epic · Legendary · Other
+//   COLLECTIBLES  "<N> on this map"   Books · (empty) · (empty) · (empty)
+// Herbs / Ore / Fishing were removed from the display (still reported).
 // ON  = fill colour @26 % + 1 px outline colour @60 %, bold label in a lightened colour, SOLID dot.
 // OFF = fill Muted @12 %, regular Muted label, HOLLOW ring.
 // The dots are baked PNGs (tools/icons/gen-dot-icons.py, per size) — the font has no reliable dot/ring glyph. Persisted per
@@ -30,8 +31,8 @@ public sealed partial class Plugin
     private HudElement BuildShowPanel() => SectionPanel(() => _loc.T("at.section.show"), () => _loc.T("at.hint.show"),
         SubCaption(() => _loc.T("at.sub.chests"), ChestCountText),
         ChipRow(AtlasGroups.ChestChips),
-        SubCaption(() => _loc.T("at.sub.gathering"), () => ""),
-        ChipRow(AtlasGroups.GatherChips));
+        SubCaption(() => _loc.T("at.sub.collectibles"), BookCountText),
+        ChipRow(AtlasGroups.CollectChips));
 
     // Bold 11 muted UPPERCASE sub-caption + right-aligned muted hint, pinned to 18 px. ToUpper runs only when the
     // language changes (cached), never per refresh.
@@ -69,10 +70,29 @@ public sealed partial class Plugin
         return _ccText;
     }
 
+    // "<N> on this map" for the book / collectible points (same caching).
+    private int _bcCount = -1;
+    private string? _bcLang;
+    private string _bcText = "";
+
+    private string BookCountText()
+    {
+        if (_scene <= 0 || !_fetchedOnce) return "";
+        int n = _model.BooksOnMap;
+        string lang = _loc.Language;
+        if (n == _bcCount && ReferenceEquals(lang, _bcLang)) return _bcText;
+        _bcCount = n; _bcLang = lang;
+        _bcText = _loc.TFormat("at.sub.chestsCount", n);
+        return _bcText;
+    }
+
+    // Always 4 equal cells; a row with fewer chips keeps the grid (empty fixed-width cells after them).
     private HudElement ChipRow(Chip[] chips)
     {
-        var cells = new HudElement[chips.Length];
-        for (int i = 0; i < chips.Length; i++) cells[i] = FilterChip(chips[i]);
+        var cells = new HudElement[4];
+        for (int i = 0; i < 4; i++)
+            cells[i] = i < chips.Length ? FilterChip(chips[i])
+                : new CellElement(new SpacerElement(ChipCellW, FilterChipH), Width: ChipCellW);
         return new RowElement(cells, Gap: ChipGap);
     }
 

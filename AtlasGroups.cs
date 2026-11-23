@@ -28,21 +28,21 @@ internal static class AtlasGroups
     // until the player turns a type on. A character with a saved filter keeps it (MigrateMask).
     public const int DefaultMask = 0;
     public const int ShownBits = KeptBits;
+    // SHOW option B (user-approved 2026-11-23): only the four chest chips + Books can be turned on. Herbs / Ore / Fishing
+    // keep their enum values (live classification + REPORTING are unchanged), but no chip shows them, so they never
+    // reach NEAREST, the guide, the big map, the minimap or the prestaged sets.
     private const int KeptBits = (1 << (int)Chip.Common) | (1 << (int)Chip.Exquisite) | (1 << (int)Chip.Luxurious)
-                                 | (1 << (int)Chip.OtherChests) | (1 << (int)Chip.Herbs) | (1 << (int)Chip.Ore)
-                                 | (1 << (int)Chip.Fishing) | (1 << (int)Chip.Books);
+                                 | (1 << (int)Chip.OtherChests) | (1 << (int)Chip.Books);
 
-    // A mask saved before the redesign: keep the bits of chips that still exist, drop the old More… groups and the
-    // More…-expanded flag (bit 31).
+    // A saved mask: keep the bits of chips that still exist; drop the old More… groups, the More…-expanded flag (bit 31)
+    // and the removed Herbs / Ore / Fishing chips.
     public static int MigrateMask(int saved) => saved & KeptBits;
 
     // Server group names (model.KnownGroups).
     public const string GChest = "chest", GOre = "ore", GHerb = "herb", GFishing = "fishing";
 
     public static readonly Chip[] ChestChips   = { Chip.Common, Chip.Exquisite, Chip.Luxurious, Chip.OtherChests };
-    public static readonly Chip[] GatherChips  = { Chip.Herbs, Chip.Ore, Chip.Fishing, Chip.Books };
-    public static readonly Chip[] ShownChips   = { Chip.Common, Chip.Exquisite, Chip.Luxurious, Chip.OtherChests,
-                                                   Chip.Herbs, Chip.Ore, Chip.Fishing, Chip.Books };
+    public static readonly Chip[] CollectChips = { Chip.Books };
 
     public static bool IsChest(Chip c) => c <= Chip.OtherChests;
 
@@ -70,10 +70,7 @@ internal static class AtlasGroups
         Chip.Exquisite   => "at.chip.exquisite",
         Chip.Luxurious   => "at.chip.luxurious",
         Chip.OtherChests => "at.chip.otherChests",
-        Chip.Herbs       => "at.chip.herbs",
-        Chip.Ore         => "at.chip.ore",
-        Chip.Fishing     => "at.chip.fishing",
-        _                => "at.chip.books",
+        _                => "at.chip.books",   // Herbs / Ore / Fishing / Hidden are never displayed
     };
 
     // Server row (group, subtype) → chip. Subtypes per the README mapping table. "Collectibles" = reading material,

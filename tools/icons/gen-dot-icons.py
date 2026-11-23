@@ -19,9 +19,6 @@ DOTS = {
     "exquisite":   0xc8763a,
     "luxurious":   0xf2bf1a,
     "otherchests": 0xd9604a,
-    "herbs":       0x8ce68c,
-    "ore":         0xb385ff,
-    "fishing":     0x66d9ff,
     "books":       0xe0c98a,
 }
 RING = 0x8a7a92

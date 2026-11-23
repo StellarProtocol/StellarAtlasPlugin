@@ -26,15 +26,12 @@ SS = 16
 BORDER = (0x2a, 0x21, 0x18, 255)
 WHITE = (255, 255, 255, 255)
 
-# name → (fill, glyph). Names match the C# Chip enum (lower-case); only the 8 SHOW chips are drawn.
+# name → (fill, glyph). Names match the C# Chip enum (lower-case); only the 5 SHOW chips are drawn (Herbs / Ore / Fishing removed 2026-11-23).
 TILES = {
     "common":      (0x98a2a7, "chest"),
     "exquisite":   (0xc8763a, "chest"),
     "luxurious":   (0xf2bf1a, "chest"),
     "otherchests": (0xd9604a, "chest"),
-    "herbs":       (0x8ce68c, "dot"),
-    "ore":         (0xb385ff, "dot"),
-    "fishing":     (0x66d9ff, "dot"),
     "books":       (0xe0c98a, "dot"),
 }
 
@@ -121,7 +118,7 @@ def main() -> None:
             im = draw(s, fill, glyph)
             im.save(f"{out}/map-{name}-{s}.png")
             images.append(im)
-        if glyph == "chest" or name == "herbs":
+        if glyph == "chest" or name == "books":
             rows.append(images)
     if "--contact" in sys.argv:
         contact(rows, sys.argv[sys.argv.index("--contact") + 1])

@@ -45,6 +45,7 @@ internal sealed class NearestModel
     private int _openedVersion = -1;
 
     public int ChestsOnMap { get; private set; }
+    public int BooksOnMap { get; private set; }
     public int Nearby { get; private set; }
 
     public NearestModel(GameLua lua) => _lua = lua;
@@ -71,7 +72,7 @@ internal sealed class NearestModel
     public bool IsLiveOnly(LiveEnt e) => IsLiveOnly(e.Uuid, e.Chip, e.X, e.Z);
     public bool IsLiveOnly(long uuid, Chip chip, float x, float z) => !_pointUuids.Contains(uuid) && !NearSeed(chip, x, z);
 
-    public void Clear() { SetPoints(Array.Empty<AtlasPoint>()); Count = 0; Version++; ChestsOnMap = 0; Nearby = 0; }
+    public void Clear() { SetPoints(Array.Empty<AtlasPoint>()); Count = 0; Version++; ChestsOnMap = 0; BooksOnMap = 0; Nearby = 0; }
 
     // ~2 Hz while the window is open (and whenever the guide needs a fresh "next nearest").
     public void Recompute(float px, float py, float pz, int mask, Dictionary<long, LiveEnt> live, OpenedStore opened)
@@ -90,11 +91,12 @@ internal sealed class NearestModel
         }
 
         // 2) nearest server points that are shown and not superseded by a live entity
-        int sn = 0, chests = 0;
+        int sn = 0, chests = 0, books = 0;
         foreach (var p in _points)
         {
             if (p.Hidden) continue;
             if (AtlasGroups.IsChest(p.Chip)) chests++;
+            else if (p.Chip == Chip.Books) books++;
             if ((mask & (1 << (int)p.Chip)) == 0) continue;
             float d = Dist(p.X, p.Y, p.Z, p.HasY, px, py, pz);
             if (sn == MaxCand && d >= _sd[MaxCand - 1]) continue;
@@ -102,6 +104,7 @@ internal sealed class NearestModel
             sn = Insert(_sp, _sd, sn, p, d);
         }
         ChestsOnMap = chests + liveOnlyChests;
+        BooksOnMap = books;
         Nearby = nearby;
 
         // 3) merge the two sorted lists into the 8 rows
