@@ -62,11 +62,20 @@ internal sealed partial class MapMarkers
         public void Invalidate() { Array.Clear(Cache, 0, Cache.Length); Array.Clear(RetryAt, 0, RetryAt.Length); }
     }
 
+    // Icon arrays = the UNION of every staged scene: the current scene first (both roots), then the extra scenes viewed
+    // on the big map (_bigOnly: never looked up under the minimap root). Keyed by the full flag Id (scene in it).
     private string[] _paths = Array.Empty<string>();
     private Chip[] _chips = Array.Empty<Chip>();
-    private long[] _ns = Array.Empty<long>();
+    private long[] _ns = Array.Empty<long>();          // full flag Id
     private bool[] _suppressed = Array.Empty<bool>();
-    private readonly Dictionary<long, int> _nIndex = new();
+    private bool[] _bigOnly = Array.Empty<bool>();
+    private readonly Dictionary<long, int> _nIndex = new();   // full flag Id → index
+    private readonly Dictionary<int, List<Entry>> _committedSets = new();   // scene → committed entries
+    private bool _bigWasOpen;
+
+    private static long FullId(int scene, long n) => IdBase + scene * 1000000000L + n;
+
+    private int CurCommittedCount() => _committedSets.TryGetValue(_curScene, out var l) ? l.Count : 0;
     private readonly bool[] _tileFailed = new bool[AtlasGroups.ChipCount];
     private readonly RootState _big = new(), _mini = new();
     private readonly Sprite?[] _sprites = new Sprite?[AtlasGroups.ChipCount];
@@ -77,23 +86,45 @@ internal sealed partial class MapMarkers
     private int _pass;
     private bool _tintFallback, _createdThisPass;
 
-    private void CommitIcons(List<Entry> job)
+    private void CommitIcons(int scene, List<Entry> job, bool extra)
     {
-        int n = job.Count;
-        _paths = new string[n];
-        _chips = new Chip[n];
-        _ns = new long[n];
-        _suppressed = new bool[n];
+        _committedSets[scene] = new List<Entry>(job);
+        RebuildIcons();
+    }
+
+    private void DropIcons(int scene)
+    {
+        if (_committedSets.Remove(scene)) RebuildIcons();
+    }
+
+    // Re-lays the union arrays (a commit / drop — a few times per scene, never per pass). Suppression is reset: the hidden
+    // list of the current scene is re-applied by the next Select.
+    private void RebuildIcons()
+    {
+        int n = 0;
+        foreach (var kv in _committedSets) n += kv.Value.Count;
+        _paths = new string[n]; _chips = new Chip[n]; _ns = new long[n]; _suppressed = new bool[n]; _bigOnly = new bool[n];
         _nIndex.Clear();
-        for (int i = 0; i < n; i++)
-        {
-            _paths[i] = "positionFlagName" + (IdBase + job[i].N).ToString(CultureInfo.InvariantCulture) + "/node_parent/img_icon";
-            _chips[i] = job[i].Chip;
-            _ns[i] = job[i].N;
-            _nIndex[job[i].N] = i;
-        }
+        int i = 0;
+        if (_committedSets.TryGetValue(_curScene, out var cur)) i = Fill(cur, _curScene, false, i);
+        foreach (var kv in _committedSets) if (kv.Key != _curScene) i = Fill(kv.Value, kv.Key, true, i);
         _big.Reset(n);
         _mini.Reset(n);
+    }
+
+    private int Fill(List<Entry> set, int scene, bool bigOnly, int i)
+    {
+        foreach (var e in set)
+        {
+            long id = FullId(scene, e.N);
+            _paths[i] = "positionFlagName" + id.ToString(CultureInfo.InvariantCulture) + "/node_parent/img_icon";
+            _chips[i] = e.Chip;
+            _ns[i] = id;
+            _bigOnly[i] = bigOnly;
+            _nIndex[id] = i;
+            i++;
+        }
+        return i;
     }
 
     // The committed entries hidden in place are EXACTLY `ns` (no map rebuild): newly hidden ones go transparent, ones
@@ -103,7 +134,7 @@ internal sealed partial class MapMarkers
     private void SuppressIcons(List<long> ns)
     {
         _suppressSet.Clear();
-        foreach (long n in ns) _suppressSet.Add(n);
+        foreach (long n in ns) _suppressSet.Add(FullId(_curScene, n));
         for (int i = 0; i < _ns.Length; i++)
         {
             bool want = _suppressSet.Contains(_ns[i]);
@@ -120,6 +151,8 @@ internal sealed partial class MapMarkers
         _chips = Array.Empty<Chip>();
         _ns = Array.Empty<long>();
         _suppressed = Array.Empty<bool>();
+        _bigOnly = Array.Empty<bool>();
+        _committedSets.Clear();
         _nIndex.Clear();
         _big.Reset(0);
         _mini.Reset(0);
@@ -137,6 +170,7 @@ internal sealed partial class MapMarkers
             _mapGen = gen;
             _big.Invalidate(); _mini.Invalidate();   // units were reassigned → look every Id up again by name
             _burst = BurstTicks;
+            NoteOtherRequest();   // the big map may have asked for another map (MapMarkers.OtherScenes.cs)
         }
         if (_burst <= 0) return;
         _burst--;
@@ -158,9 +192,12 @@ internal sealed partial class MapMarkers
         try
         {
             var big = GameObject.Find(BigRootPath);   // null while the big map is closed (Find skips inactive objects)
-            if (big != null) Pass(big.transform, _big, t0);
+            if (big != null) Pass(big.transform, _big, t0, mini: false);
+            // big map closed → the other maps it browsed are dropped (no rebuild: the minimap never showed them)
+            if (_bigWasOpen && big == null && _extraOrder.Count > 0) DropAllExtras();
+            _bigWasOpen = big != null;
             var mini = MiniRoot(now);
-            if (mini != null) Pass(mini, _mini, t0);
+            if (mini != null) Pass(mini, _mini, t0, mini: true);
         }
         catch (Exception ex) { WarnOnce(ref _passWarned, "map icon pass failed: " + ex.Message); }
         Slow("icon pass", t0);
@@ -180,7 +217,7 @@ internal sealed partial class MapMarkers
         return _miniRoot;
     }
 
-    private void Pass(Transform root, RootState st, long t0)
+    private void Pass(Transform root, RootState st, long t0, bool mini)
     {
         if (!root.gameObject.activeInHierarchy) return;
         int n = _paths.Length, finds = 0;
@@ -190,6 +227,7 @@ internal sealed partial class MapMarkers
             int i = st.Cursor;
             if (i >= n) i = 0;
             st.Cursor = (i + 1) % n;
+            if (mini && _bigOnly[i]) continue;   // other maps exist only on the big map
             var chip = _chips[i];
             bool hide = _suppressed[i];
             Sprite? sprite = null;

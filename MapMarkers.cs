@@ -32,7 +32,8 @@ namespace Stellar.Atlas;
 // SuppressIcons) and folded into the next push that happens anyway; a hide-only push is allowed at most every
 // HideDispatchGap seconds.
 //
-// Ids: Id = 90000000000000 + n (14 digits; the KB recipe used 9e14 = 15 digits). The unit is named
+// Ids: Id = 90000000000000 + scene × 1e9 + n (14 digits for scene < 10000; the KB recipe used 9e14 = 15 digits; the
+// scene term keeps two staged scenes' points apart — MapMarkers.OtherScenes.cs). The unit is named
 // "positionFlagName" .. data.Id by Lua string concat (map_flags_comp.lua:398), and Lua 5.1/LuaJIT formats numbers with
 // %.14g — a 15-digit id would come out as "9e+14" for EVERY point. 14 digits print exactly, so C# can rebuild the unit
 // name for the icon pass. n = the server point id (stable), or 600000000 + a per-session counter for a live-only entity.
@@ -63,11 +64,12 @@ internal sealed partial class MapMarkers
         "   local list = (rawget(vm,'__orig_MH'))(sceneId, layer) or {}" +
         "   pcall(function()" +
         "    rawset(_G,'__atlas_mapgen', (rawget(_G,'__atlas_mapgen') or 0) + 1)" +
+        "    if sceneId ~= rawget(_G,'__atlas_cur') then rawset(_G,'__atlas_other', sceneId) end" +
         "    local m = rawget(_G,'__atlas_map')" +
         "    local pts = m and m[sceneId]" +
         "    if pts == nil then return end" +
         "    for i = 1, #pts do local p = pts[i]" +
-        "     list[#list + 1] = {Id = 90000000000000 + p[1], Uid = 900000000 + p[1], Type = -1, FlagType = E.MapFlagType.Position," +
+        "     list[#list + 1] = {Id = 90000000000000 + sceneId * 1000000000 + p[1], Uid = 900000000 + p[1], Type = -1, FlagType = E.MapFlagType.Position," +
         "      TypeId = 303, Layer = layer, Pos = Vector3.New(p[2], p[3], p[4]), IconPath = 'ui/atlas/npc/talk_icon_box', Name = p[5]}" +
         "    end" +
         "   end)" +
@@ -82,8 +84,14 @@ internal sealed partial class MapMarkers
         " for i = 1, select('#', ...) do a[#a + 1] = (select(i, ...)) end" +
         " end)" +
         " rawset(_G,'__atlas_mcommit',function(sid)" +
-        " local m = {} if sid ~= nil then m[sid] = rawget(_G,'__atlas_stage') or {} end" +
+        " local m = rawget(_G,'__atlas_map') or {} m[sid] = rawget(_G,'__atlas_stage') or {}" +
         " rawset(_G,'__atlas_map', m) rawset(_G,'__atlas_stage', nil)" +
+        " end)" +
+        " rawset(_G,'__atlas_mdrop',function(sid)" +
+        " local m = rawget(_G,'__atlas_map') if m ~= nil then m[sid] = nil end" +
+        " end)" +
+        " rawset(_G,'__atlas_mclear',function(cur)" +
+        " rawset(_G,'__atlas_map', {}) rawset(_G,'__atlas_cur', cur) rawset(_G,'__atlas_other', nil)" +
         " end)" +
         " rawset(_G,'__atlas_mdispatch',function()" +
         " pcall(function() Z.EventMgr:Dispatch(Z.ConstValue.MapFlagShowListChanged) end)" +
@@ -110,7 +118,10 @@ internal sealed partial class MapMarkers
 
     private readonly IPluginServices _services;
     private readonly ILocalization _loc;
+    private readonly AtlasClient _client;
     private bool _defined, _installed;
+    private int _curScene;
+    private bool _needClear = true;   // (re)set __atlas_cur + empty the Lua table before the first push of a scene
 
     // selection scratch (grown on demand, reused — no allocation per sync once warm)
     private long[] _keys = new long[256];
@@ -130,9 +141,10 @@ internal sealed partial class MapMarkers
     private float _lastSelectAt = -100f, _lastDispatchAt = -100f;
     private readonly StringBuilder _sb = new(4096);
 
-    public MapMarkers(IPluginServices services)
+    public MapMarkers(IPluginServices services, AtlasClient client)
     {
         _services = services;
+        _client = client;
         _loc = services.Localization;
     }
 
@@ -176,6 +188,8 @@ internal sealed partial class MapMarkers
         _installRetryAt = 0f;
         _sticky.Clear();
         _jobPos = -1; _lastSig = _lastSigAll = 0; _dispatchPending = false;
+        _extraOrder.Clear(); _otherWanted = 0; _otherPoints = null; _otherLoading = 0;
+        _needClear = true;
         ResetIcons();
     }
 
@@ -184,6 +198,8 @@ internal sealed partial class MapMarkers
     {
         _sticky.Clear();
         _jobPos = -1; _lastSig = _lastSigAll = 0; _dispatchPending = false;
+        _extraOrder.Clear(); _otherWanted = 0; _otherPoints = null; _otherLoading = 0;
+        _needClear = true;   // the Lua side (every staged scene) is emptied on the next tick
         ResetIcons();
     }
 
@@ -202,6 +218,8 @@ internal sealed partial class MapMarkers
         OpenedStore opened, float now)
     {
         if (scene <= 0) return;
+        _curScene = scene;
+        _modelRef = model; _openedRef = opened;
         // Hitch fix (2026-11-23, [Hitch] stellar.atlas=137.5 ms once after the first push): every Lua step gets its own
         // tick — define/install, each batch, the commit, and the map refresh dispatch — and each is timed (Slow()).
         _installedThisTick = false;
@@ -209,6 +227,12 @@ internal sealed partial class MapMarkers
         if (_dispatchPending) { Dispatch(); return; }
         if (_jobPos >= 0) { PushStep(); return; }
         if (!EnsureInstalled(now) || _installedThisTick) return;   // install (prewarm) on its own tick, ahead of any push
+        if (_needClear)
+        {
+            if (Call("__atlas_mclear(" + scene.ToString(CultureInfo.InvariantCulture) + ")")) _needClear = false;
+            return;
+        }
+        if (TickOther(now, mask)) return;   // another map browsed on the big map (MapMarkers.OtherScenes.cs)
         if (!dataReady || now - _lastSelectAt < SelectGap) return;
         // Re-selected every SelectGap (one pass over the scene's points + a sort of a few thousand longs, sub-ms, no
         // Lua); pushed only when the set (ids + chips) changed AND the last map rebuild is ≥ DispatchGap ago — changes
@@ -219,7 +243,7 @@ internal sealed partial class MapMarkers
         if (_jobSig == _lastSig) { _job.Clear(); return; }
         // Nothing to show and nothing of ours on the maps (e.g. every chip off — the new-character default): leave the
         // game's maps untouched, no push and no rebuild. If flags were pushed earlier, the empty set goes out once to clear.
-        if (_job.Count == 0 && _nIndex.Count == 0)
+        if (_job.Count == 0 && CurCommittedCount() == 0)
         {
             _lastSig = _jobSig; _lastSigAll = _jobSigAll;
             return;
@@ -232,6 +256,7 @@ internal sealed partial class MapMarkers
             if (now - _lastDispatchAt < HideDispatchGap) { _job.Clear(); return; }
         }
         _jobScene = scene;
+        _jobExtra = false;
         _jobPos = 0;
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         if (!Call("__atlas_mstage()")) { _jobPos = -1; return; }
@@ -273,10 +298,11 @@ internal sealed partial class MapMarkers
         if (_jobPos < _job.Count) return;
         Call("__atlas_mcommit(" + _jobScene.ToString(CultureInfo.InvariantCulture) + ")");
         _dispatchPending = true;
+        _jobPos = -1;
+        if (_jobExtra) { CommittedOther(_jobScene, _job.Count); return; }
         _lastSig = _jobSig;
         _lastSigAll = _jobSigAll;
-        CommitIcons(_job);   // MapMarkers.Icons.cs: the unit names + chips the icon pass looks for
-        _jobPos = -1;
+        CommitIcons(_jobScene, _job, extra: false);   // MapMarkers.Icons.cs: unit names + chips the icon pass looks for
     }
 
     // The shown set: server points (not stale / opened / not-here) + live-only finds of this scene, filtered by the SHOW
@@ -349,7 +375,7 @@ internal sealed partial class MapMarkers
 
     private bool AllCommitted(List<Entry> job)
     {
-        foreach (var e in job) if (!_nIndex.ContainsKey(e.N)) return false;
+        foreach (var e in job) if (!_nIndex.ContainsKey(FullId(_curScene, e.N))) return false;
         return true;
     }
 
