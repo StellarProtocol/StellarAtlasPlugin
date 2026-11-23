@@ -63,7 +63,16 @@ public sealed partial class Plugin : IStellarPlugin
             _cfg.Set<bool>("share_dropped", true);
             _cfg.SaveQuiet();
         }
-        _noticeSeen  = _cfg.Get<bool>("notice_seen", false);
+        // Migration: the old notice keys (notice_seen / notice_shown, from the "OK, share / Don't share" notice) are dropped
+        // once, so every install sees the new "Atlas is a shared map" notice. Runs before notice_seen_v2 exists (the
+        // prefix would match it too); the guard key deliberately doesn't start with "notice_".
+        if (!_cfg.Get<bool>("v1_notice_dropped", false))
+        {
+            _cfg.RemoveByPrefix("notice_");
+            _cfg.Set<bool>("v1_notice_dropped", true);
+            _cfg.SaveQuiet();
+        }
+        _noticeSeen  = _cfg.Get<bool>("notice_seen_v2", false);
         string url   = _cfg.Get<string>("server_url", DefaultServerUrl) ?? DefaultServerUrl;
 
         _lua     = new GameLua(services);
@@ -155,7 +164,7 @@ public sealed partial class Plugin : IStellarPlugin
     private void AcknowledgeNotice()
     {
         _noticeSeen = true;
-        _cfg.Set<bool>("notice_seen", true);
+        _cfg.Set<bool>("notice_seen_v2", true);
         _cfg.Save();
     }
 
