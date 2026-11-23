@@ -36,11 +36,8 @@
   "at.dist": "{0} m",
   "at.empty": "No chests known here yet. Ones you find are added.",
   "at.stopGuiding": "Stop guiding",
-  "at.share": "Share",
-  "at.hint.shareOn": "Sharing on. Sends only what you find and where. No names.",
-  "at.hint.shareOff": "Sharing off.",
-  "at.notice.title": "Help other players find chests",
-  "at.notice.body": "While Atlas is on, it shares the chests and resources you find (what and where) so the map gets better for everyone. It never sends your name, UID or chat. You can turn this off at any time.",
-  "at.notice.ok": "OK, share",
-  "at.notice.no": "Don't share"
+  "at.hint.sharedMap": "Shared map · what you find and where is shared. No names.",
+  "at.notice.title": "Atlas is a shared map",
+  "at.notice.body": "While Atlas is on, the chests and resources you come across (what they are and where) are shared so the map stays complete for everyone. Your name, UID and chat are never sent. To stop sharing, turn Atlas off in the launcher.",
+  "at.notice.gotIt": "Got it"
 }

@@ -200,39 +200,4 @@ public sealed partial class Plugin
             FillColorFn = () => Fill(PanelColor()), CornerRadius = 6f, PaddingX = 10f, PaddingY = 8f,
         };
     }
-
-    // ── clickable on/off chip (MinimalNameplate 2.3.0, measured 64 × 24 in both states) ───────────────────────────
-    // on = bold Success on a 22% wash, off = regular MenuMuted on a muted wash. Two complete chips swapped by a
-    // Conditional wrapping the WHOLE chip, inside one fixed-width cell. MaxWidth pins the width: a MaxWidth-0 bubble
-    // under a Conditional caps itself at the 100 px default (KB WindowBuilder-Patterns). Both states share one HoverFlag.
-    // The label is the same in both states (Atlas footer "Share"): the colour says on/off. Ellipsized so a long locale
-    // can't widen the fixed 64 px cell (R10).
-    private const float ChipWidth  = 64f;
-    private const float ChipHeight = 24f;
-
-    private HudElement ToggleChip(Func<string> label, Func<bool> on, Action toggle)
-    {
-        var hover = new HoverFlag();
-        float Wash(float a) => a + (hover.On ? ChipHoverAlpha : 0f);
-        return new CellElement(new ConditionalElement(on,
-            ChipShell(DropBold(new TextElement(label, Color: () => Readable(SuccessColor(), PanelColor()),
-                    Width: ChipWidth, Align: TextAlign.Center, NoWrap: true, FontSize: 12) { Bold = true, Ellipsize = true }),
-                () => Over(SuccessColor() with { A = Wash(ChipWashAlpha) }, PanelColor()), hover, toggle, ChipWidth),
-            ChipShell(new TextElement(label, Color: () => MutedColor(), Width: ChipWidth,
-                    Align: TextAlign.Center, NoWrap: true, FontSize: 12) { RichEmoji = true, Ellipsize = true },
-                () => Over(MutedColor() with { A = Wash(ChipOffAlpha) }, PanelColor()), hover, toggle, ChipWidth)),
-            Width: ChipWidth);
-    }
-
-    private HudElement ChipShell(HudElement label, Func<ColorRgba> fill, HoverFlag hover, Action onClick, float width)
-        => new BubbleElement(new SelectableElement(new RowElement(new HudElement[]
-            {
-                new SpacerElement(0f, ChipHeight),   // width 0 + height > 0 = a non-flexible height strut
-                label,
-            }, Gap: 0.01f, Justify: RowJustify.Center),
-            OnClick: onClick) { Bare = true, OnHover = over => hover.On = over })
-        {
-            FillColorFn = () => Fill(fill()), CornerRadius = RoundRadius(ChipHeight), PaddingX = 0f, PaddingY = 0f,
-            MaxWidth = width,
-        };
 }

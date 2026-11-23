@@ -36,11 +36,8 @@
   "at.dist": "{0} m",
   "at.empty": "Wala pang kilalang chest dito. Idadagdag ang mga mahahanap mo.",
   "at.stopGuiding": "Itigil gabay",
-  "at.share": "Ibahagi",
-  "at.hint.shareOn": "Naka-on ang pagbabahagi. Ipinapadala lang ang nahanap mo at kung saan. Walang pangalan.",
-  "at.hint.shareOff": "Naka-off ang pagbabahagi.",
-  "at.notice.title": "Tulungan ang ibang player na makahanap ng chest",
-  "at.notice.body": "Habang naka-on ang Atlas, ibinabahagi nito ang mga chest at resource na nahanap mo (ano at saan) para gumanda ang mapa para sa lahat. Hindi nito ipinapadala ang pangalan, UID o chat mo. Puwede mo itong i-off kahit kailan.",
-  "at.notice.ok": "OK, ibahagi",
-  "at.notice.no": "Huwag ibahagi"
+  "at.hint.sharedMap": "Shared na mapa · ibinabahagi ang nahanap mo at kung saan. Walang pangalan.",
+  "at.notice.title": "Ang Atlas ay isang shared na mapa",
+  "at.notice.body": "Habang naka-on ang Atlas, ibinabahagi ang mga chest at resource na nadadaanan mo (ano at saan) para manatiling kumpleto ang mapa para sa lahat. Hindi kailanman ipinapadala ang pangalan, UID o chat mo. Para tumigil sa pagbabahagi, i-off ang Atlas sa launcher.",
+  "at.notice.gotIt": "Sige"
 }

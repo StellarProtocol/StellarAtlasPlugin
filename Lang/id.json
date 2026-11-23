@@ -36,11 +36,8 @@
   "at.dist": "{0} m",
   "at.empty": "Belum ada peti yang diketahui di sini. Yang kamu temukan akan ditambahkan.",
   "at.stopGuiding": "Stop pandu",
-  "at.share": "Bagikan",
-  "at.hint.shareOn": "Berbagi aktif. Hanya mengirim apa yang kamu temukan dan di mana. Tanpa nama.",
-  "at.hint.shareOff": "Berbagi mati.",
-  "at.notice.title": "Bantu pemain lain menemukan peti",
-  "at.notice.body": "Selama Atlas aktif, peti dan sumber daya yang kamu temukan (apa dan di mana) dibagikan agar peta makin baik untuk semua. Nama, UID, dan chat kamu tidak pernah dikirim. Kamu bisa mematikannya kapan saja.",
-  "at.notice.ok": "OK, bagikan",
-  "at.notice.no": "Jangan bagikan"
+  "at.hint.sharedMap": "Peta bersama · temuanmu dan lokasinya dibagikan. Tanpa nama.",
+  "at.notice.title": "Atlas adalah peta bersama",
+  "at.notice.body": "Selama Atlas aktif, peti dan sumber daya yang kamu temui (apa dan di mana) dibagikan agar peta tetap lengkap untuk semua. Nama, UID, dan chat kamu tidak pernah dikirim. Untuk berhenti berbagi, matikan Atlas di launcher.",
+  "at.notice.gotIt": "Mengerti"
 }

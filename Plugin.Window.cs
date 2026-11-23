@@ -9,8 +9,9 @@ namespace Stellar.Atlas;
 //                "Offline · showing the copy from 2 h ago" when the server can't be reached)
 //   SHOW         filter chips (Plugin.Window.Show.cs)
 //   NEAREST      8 reserved rows (Plugin.Window.Nearest.cs)
-//   footer       Stop guiding (Neutral) · Share chip · muted sharing hint
-// First open (2a): the same header + a notice tile + OK, share (Primary) / Don't share (Neutral), shown until answered.
+//   footer       Stop guiding (Neutral) · muted "Shared map" hint
+// First open (2a): the same header + an informational notice tile ("Atlas is a shared map") + one full-width Primary
+// "Got it" — sharing is always on (user decision 2026-11-23), the notice only informs.
 //
 // Performance (Plugin-Performance-Rules.md §7): every Func is a field read or a cached string; strings are rebuilt only
 // when what they show changes (scene, counts, sync state, age bucket, language), never per refresh.
@@ -109,14 +110,13 @@ public sealed partial class Plugin
                                    : _loc.TFormat("at.age.min", Math.Max(1, b));
 
     // ── footer ────────────────────────────────────────────────────────────────────────────────────────────────────
-    // [Stop guiding] [Share] [muted hint, up to two lines]. Stop guiding is recessed while nothing is guided (rule 22).
+    // [Stop guiding] [muted "Shared map" hint, up to two lines]. Stop guiding is recessed while nothing is guided (rule 22).
     private HudElement BuildFooter() => new RowElement(new HudElement[]
     {
         new SpacerElement(0f, PillHeight),
         new CellElement(NeutralButton(() => _loc.T("at.stopGuiding"), StopGuidingClicked, StopPillLabelW,
             enabled: () => _guide.Active), Width: StopPillLabelW + 2f * PillPadX),
-        ToggleChip(() => _loc.T("at.share"), () => _share, () => SetShare(!_share)),
-        new CellElement(new TextElement(() => _loc.T(_share ? "at.hint.shareOn" : "at.hint.shareOff"),
+        new CellElement(new TextElement(() => _loc.T("at.hint.sharedMap"),
             Color: () => MutedColor(), FontSize: 11) { RichEmoji = true, MaxLines = 2, Ellipsize = true }, Weight: 1f),
     }, Gap: 8f);
 
@@ -133,11 +133,7 @@ public sealed partial class Plugin
         {
             FillColorFn = () => Fill(TileColor()), CornerRadius = TileRadius, PaddingX = 10f, PaddingY = 8f,
         },
-        // PillPair: equal weighted cells, both pills given the same label width (SDL §4).
-        new RowElement(new HudElement[]
-        {
-            new CellElement(PrimaryButton(() => _loc.T("at.notice.ok"), () => AnswerNotice(true), NoticePillLabelW), Weight: 1f),
-            new CellElement(NeutralButton(() => _loc.T("at.notice.no"), () => AnswerNotice(false), NoticePillLabelW), Weight: 1f),
-        }, Gap: 8f),
+        // One full-width Primary pill: a Bubble directly in a Column fills the width (SDL §6).
+        PrimaryButton(() => _loc.T("at.notice.gotIt"), AcknowledgeNotice, NoticePillLabelW),
     }, Gap: 8f);
 }

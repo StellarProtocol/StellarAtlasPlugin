@@ -11,7 +11,11 @@ namespace Stellar.Atlas;
 // Approved prototype: _scratch\prototypes\atlas.html option A (section 1 + states 2a–2d).
 //
 // Core: services, window / launcher registration, logout + dispose, persisted settings (per install: server URL,
-// share, notice; per character: SHOW chips). Pieces:
+// notice; per character: SHOW chips). Pieces:
+//
+// Sharing is ALWAYS ON (user decision 2026-11-23): using Atlas means sharing what you find; the player is informed by the
+// first-open notice (and the README / launcher description), and nothing is sent before that notice has been on screen.
+// To stop sharing, turn Atlas off in the launcher.
 //   Plugin.Tick.cs            scene / player / scan / fetch / report scheduling (world-only, ≤5 Hz)
 //   Plugin.Guide.cs           the game's guide marker + "just opened" flash
 //   Plugin.Window*.cs         the house-style window (header, SHOW, NEAREST, footer, first-open notice)
@@ -42,8 +46,7 @@ public sealed partial class Plugin : IStellarPlugin
     private readonly MapMarkers    _map;
     private readonly GroundProbe   _ground;
 
-    private bool _share;              // per install, default ON (user decision); see SharingActive
-    private bool _noticeSeen;         // the first-open notice was answered
+    private bool _noticeSeen;         // the first-open notice was acknowledged ("Got it")
     private bool _noticeShown;        // the notice has been on screen at least once (this session or before)
     private long _charId;
     private int  _mask = AtlasGroups.DefaultMask;   // SHOW chips, per character
@@ -54,7 +57,13 @@ public sealed partial class Plugin : IStellarPlugin
         _loc      = services.Localization;
         _cfg      = services.Config.GetSection("settings");
 
-        _share       = _cfg.Get<bool>("share", true);
+        // Migration: the old per-install "share" switch is gone (sharing is always on) — drop a stored value once.
+        if (!_cfg.Get<bool>("share_dropped", false))
+        {
+            _cfg.RemoveByPrefix("share");
+            _cfg.Set<bool>("share_dropped", true);
+            _cfg.SaveQuiet();
+        }
         _noticeSeen  = _cfg.Get<bool>("notice_seen", false);
         _noticeShown = _noticeSeen || _cfg.Get<bool>("notice_shown", false);
         string url   = _cfg.Get<string>("server_url", DefaultServerUrl) ?? DefaultServerUrl;
@@ -141,24 +150,16 @@ public sealed partial class Plugin : IStellarPlugin
     }
 
     // ── persisted settings ────────────────────────────────────────────────────────────────────────────────────────
-    // Reports go out only when Share is on AND the first-open notice has been on screen once — default ON is the user's
-    // decision, but nothing leaves the machine before the player was told what is sent.
-    private bool SharingActive => _share && _noticeShown;
+    // Reports go out whenever Atlas runs, once the first-open notice has been on screen (never before the player was told
+    // what is shared).
+    private bool SharingActive => _noticeShown;
 
-    private void SetShare(bool on)
-    {
-        _share = on;
-        if (!on) _reports.Clear();
-        _cfg.Set<bool>("share", on);
-        _cfg.Save();
-    }
-
-    private void AnswerNotice(bool share)
+    private void AcknowledgeNotice()
     {
         _noticeSeen = _noticeShown = true;
         _cfg.Set<bool>("notice_seen", true);
         _cfg.Set<bool>("notice_shown", true);
-        SetShare(share);   // saves
+        _cfg.Save();
     }
 
     private (string Id, string Secret) GetInstall() =>

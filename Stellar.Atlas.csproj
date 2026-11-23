@@ -11,6 +11,7 @@
     <RootNamespace>Stellar.Atlas</RootNamespace>
     <AssemblyName>Stellar.Atlas</AssemblyName>
     <Version>1.0.0</Version>
+    <Description>Chest and resource finder. Atlas is a shared map: while it runs, the chests and resources you find (what and where) are shared with the Atlas server. No names, UIDs or chat are sent.</Description>
     <Deterministic>true</Deterministic>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
