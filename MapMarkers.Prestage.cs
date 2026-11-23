@@ -12,7 +12,7 @@ namespace Stellar.Atlas;
 //      Every scene with a disk copy is queued; a copy whose version differs from the index is refreshed from the server
 //      (AtlasClient.LoadScene, worker thread). A scene never visited (no copy) is fetched only on its first visit /
 //      browse — then staged and dispatched once, as before.
-//   2. Staging, one scene at a time: same filter / order / cap / hides as the current scene (BuildStaged = Select minus
+//   2. Staging, one scene at a time: same filter / order / cap / hides as the current scene (BeginBuild + ContinueBuild = Select minus
 //      the live part), pushed in 25-point batches within StageBudgetMs per tick, committed WITHOUT a dispatch — unless
 //      that scene is on screen (the current scene is owned by Select; a big-map-browsed scene dispatches once).
 //      All scenes use the same cap as the current one (MapCap): the staged set must be exactly what Select would build
@@ -104,16 +104,20 @@ internal sealed partial class MapMarkers
             }
         }
 
-        // a loaded scene → build + start its push
-        if (_readyPoints != null)
+        // a build in progress → continue it within the budget; when complete, start its push
+        if (_bScene != 0)
         {
-            int scene = _readyScene;
-            var pts = _readyPoints;
-            _readyPoints = null;
-            if (scene == _curScene) return false;   // the current scene is Select's
+            if (_bScene == _curScene) { _bScene = 0; return false; }                     // we moved there: Select's now
+            if (_bMask != mask) { Enqueue(_bScene, front: true); _bScene = 0; return false; }   // filter changed: redo
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-            BuildStaged(scene, pts, mask);
-            Slow("prestage build", t0);
+            if (!ContinueBuild(t0)) { Slow("prestage build slice", t0); return true; }
+            Slow("prestage build slice", t0);
+            int scene = _bScene;
+            _bScene = 0;
+            _job.Clear();
+            _job.AddRange(_bJob);   // the push machinery works on _job (free now: no job in progress)
+            _jobSig = _bSig ^ (ulong)scene;
+            _jobSigAll = _bSigAll ^ (ulong)scene;
             if (_staged.TryGetValue(scene, out var st) && st.Sig == _jobSig && st.Mask == mask) { _job.Clear(); return true; }
             if (_job.Count == 0)
             {
@@ -132,9 +136,22 @@ internal sealed partial class MapMarkers
             return true;
         }
 
+        // a loaded scene → begin its build (filter + sort now; entries in budgeted slices)
+        if (_readyPoints != null)
+        {
+            int scene = _readyScene;
+            var pts = _readyPoints;
+            _readyPoints = null;
+            if (scene == _curScene) return false;   // the current scene is Select's
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            BeginBuild(scene, pts, mask);
+            Slow("prestage build begin", t0);
+            return true;
+        }
+
         // load the next queued scene (worker thread) — not while every chip is off (nothing could be shown; the queue
         // waits for the first chip)
-        if (_loading == 0 && _queue.Count > 0 && anyShown)
+        if (_loading == 0 && _bScene == 0 && _queue.Count > 0 && anyShown)
         {
             int scene = _queue[0];
             _queue.RemoveAt(0);
@@ -162,39 +179,56 @@ internal sealed partial class MapMarkers
 
     // Select minus the live part: same candidates (not stale, filter, id range), same hides (this character's opened /
     // not-here for THAT scene, kept in the "all" signature), same order and cap → the same signature Select would get.
-    private void BuildStaged(int scene, AtlasPoint[] points, int mask)
+    //
+    // SLICED (in-game 2026-11-23: "prestage build 12.1 ms" for scene 7, 486 → 300): BeginBuild does the cheap part —
+    // filter + sort of ≤ a few thousand longs — and ContinueBuild turns the ordered points into entries within
+    // StageBudgetMs per tick (the cost is the names: ServerName asks the game's tables once per new config id, and the
+    // opened / not-here check). Own buffers (_b*), so the current scene's Select may run between slices.
+    private int _bScene, _bMask, _bPos, _bTake;
+    private AtlasPoint[] _bPts = Array.Empty<AtlasPoint>();
+    private long[] _bKeys = new long[256];
+    private int[] _bIdx = new int[256];
+    private readonly List<Entry> _bJob = new(MapCap);
+    private ulong _bSig, _bSigAll;
+
+    private void BeginBuild(int scene, AtlasPoint[] points, int mask)
     {
-        _cands.Clear();
-        foreach (var p in points)
-            if (!p.Stale && (mask & (1 << (int)p.Chip)) != 0 && p.Id > 0 && p.Id < LiveIdBase) _cands.Add(p);
-        int n = _cands.Count;
-        if (_keys.Length < n) { _keys = new long[n * 2]; _idx = new int[n * 2]; }
-        for (int i = 0; i < n; i++)
+        int n = 0;
+        if (_bKeys.Length < points.Length) { _bKeys = new long[points.Length * 2]; _bIdx = new int[points.Length * 2]; }
+        for (int i = 0; i < points.Length; i++)
         {
-            var ap = (AtlasPoint)_cands[i];
-            _keys[i] = CapKey(ap.Chip, ap.Id);
-            _idx[i] = i;
+            var p = points[i];
+            if (p.Stale || (mask & (1 << (int)p.Chip)) == 0 || p.Id <= 0 || p.Id >= LiveIdBase) continue;
+            _bKeys[n] = CapKey(p.Chip, p.Id);
+            _bIdx[n] = i;
+            n++;
         }
-        Array.Sort(_keys, _idx, 0, n);
-        _job.Clear();
-        _jobHidden.Clear();
-        ulong sig = 1469598103934665603UL, sigAll = sig;
-        int take = Math.Min(n, MapCap);
-        LogCap(scene, take, n);
-        for (int k = 0; k < take; k++)
+        Array.Sort(_bKeys, _bIdx, 0, n);
+        _bScene = scene; _bMask = mask; _bPts = points; _bPos = 0;
+        _bTake = Math.Min(n, MapCap);
+        LogCap(scene, _bTake, n);
+        _bJob.Clear();
+        _bSig = _bSigAll = 1469598103934665603UL;
+    }
+
+    // Returns true when the build is complete.
+    private bool ContinueBuild(long t0)
+    {
+        while (_bPos < _bTake)
         {
-            var p = (AtlasPoint)_cands[_idx[k]];
-            sigAll = (sigAll ^ (ulong)p.Id) * 1099511628211UL;
-            sigAll = (sigAll ^ (ulong)p.Chip) * 1099511628211UL;
-            if (_openedRef != null && _openedRef.MatchesIn(scene, p)) continue;
+            if (_bPos > 0 && (_bPos & 7) == 0 && ElapsedMs(t0) >= StageBudgetMs) return false;
+            var p = _bPts[_bIdx[_bPos++]];
+            _bSigAll = (_bSigAll ^ (ulong)p.Id) * 1099511628211UL;
+            _bSigAll = (_bSigAll ^ (ulong)p.Chip) * 1099511628211UL;
+            if (_openedRef != null && _openedRef.MatchesIn(_bScene, p)) continue;
             string name = _modelRef != null ? _modelRef.ServerName(p) : p.Label;
-            _job.Add(new Entry { N = p.Id, Chip = p.Chip, X = p.X, Y = p.HasY ? p.Y : 0f, Z = p.Z,
-                                 Name = name.Length > 0 ? name : ChipName(p.Chip) });
-            sig = (sig ^ (ulong)p.Id) * 1099511628211UL;
-            sig = (sig ^ (ulong)p.Chip) * 1099511628211UL;
+            _bJob.Add(new Entry { N = p.Id, Chip = p.Chip, X = p.X, Y = p.HasY ? p.Y : 0f, Z = p.Z,
+                                  Name = name.Length > 0 ? name : ChipName(p.Chip) });
+            _bSig = (_bSig ^ (ulong)p.Id) * 1099511628211UL;
+            _bSig = (_bSig ^ (ulong)p.Chip) * 1099511628211UL;
         }
-        _jobSig = sig ^ (ulong)scene;
-        _jobSigAll = sigAll ^ (ulong)scene;
+        _bPts = Array.Empty<AtlasPoint>();   // don't keep the scene's points alive
+        return true;
     }
 
     // PushStep finished a prestaged scene: remember it; rebuild only if it is on screen (browsed on the big map).
@@ -275,7 +309,8 @@ internal sealed partial class MapMarkers
     private void ResetPrestage()
     {
         _staged.Clear(); _emptyScenes.Clear(); _queue.Clear(); _queued.Clear();
-        _loading = _readyScene = _priorityScene = _viewedScene = 0;
+        _loading = _readyScene = _priorityScene = _viewedScene = _bScene = 0;
+        _bPts = Array.Empty<AtlasPoint>();
         _readyPoints = null; _stagedMask = -1; _indexDue = true; _sceneChangeAt = -1f;
     }
 }
