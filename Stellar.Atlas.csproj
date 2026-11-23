@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="$(MSBuildThisFileDirectory)Local.props" Condition="Exists('$(MSBuildThisFileDirectory)Local.props')" />
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <NoWarn>CS8632;CS8765</NoWarn>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>Stellar.Atlas</RootNamespace>
+    <AssemblyName>Stellar.Atlas</AssemblyName>
+    <Version>1.0.0</Version>
+    <Deterministic>true</Deterministic>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- House style needs >= 2.30.0 (theme status colours, VirtualList FixedHeight, WindowSpec.Prebuild); 2.33.0 is the
+         newest release on nuget.org. -->
+    <PackageReference Include="Stellar.Abstractions"       Version="2.33.0" />
+    <PackageReference Include="Stellar.PluginContracts"    Version="2.33.0" />
+    <PackageReference Include="Stellar.Plugin.InteropRefs" Version="2.33.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Build-time Atlas client key (Local.props / CI secret), read back by AtlasClient.ClientKey. Empty = offline only. -->
+    <AssemblyMetadata Include="AtlasClientKey" Value="$(AtlasClientKey)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Glyph pre-drawn per size (tools/icons/gen-atlas-icon.py); the code picks the exact bitmap, never scales one master. -->
+    <EmbeddedResource Include="Resources/icons/atlas-*.png" LogicalName="Stellar.Atlas.%(Filename)%(Extension)" />
+    <!-- i18n catalogs, auto-discovered by the framework via LogicalName "Stellar.<AssemblyName>.Lang.<locale>.json". -->
+    <EmbeddedResource Include="Lang/en.json"  LogicalName="Stellar.Atlas.Lang.en.json" />
+    <EmbeddedResource Include="Lang/ja.json"  LogicalName="Stellar.Atlas.Lang.ja.json" />
+    <EmbeddedResource Include="Lang/th.json"  LogicalName="Stellar.Atlas.Lang.th.json" />
+    <EmbeddedResource Include="Lang/id.json"  LogicalName="Stellar.Atlas.Lang.id.json" />
+    <EmbeddedResource Include="Lang/fil.json" LogicalName="Stellar.Atlas.Lang.fil.json" />
+    <EmbeddedResource Include="Lang/ko.json"  LogicalName="Stellar.Atlas.Lang.ko.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="tools/**" />
+  </ItemGroup>
+
+</Project>
