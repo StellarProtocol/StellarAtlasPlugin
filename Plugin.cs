@@ -204,6 +204,7 @@ public sealed partial class Plugin : IStellarPlugin
     {
         _mask ^= bit;
         if (_charId != 0) { _cfg.Set<int>(MaskKey(_charId), _mask); _cfg.Save(); }
+        _map.NoteFilterChanged(_services.Framework.TimeNow);   // coalesce a burst of chip clicks into one map rebuild
         RecomputeNearest();
     }
 

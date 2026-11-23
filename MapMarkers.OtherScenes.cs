@@ -10,7 +10,8 @@ namespace Stellar.Atlas;
 // plugin then:
 //   1. loads that scene's points through the normal client path (disk cache + conditional GET, worker thread);
 //   2. applies the same SHOW filters + this character's opened / not-here hides for THAT scene (OpenedStore.MatchesIn),
-//      fixed order (chip, then id), capped at MapCap;
+//      fixed order by value (CapKey: Legendary → Epic → Other → Common → gathering, then id), capped at MapCapBrowsed
+//      (500 — only the big map shows these);
 //   3. stages them as _G.__atlas_map[scene] with the same batching, then ONE refresh dispatch (same DispatchGap).
 // At most MaxExtraScenes extra scenes are kept (LRU); all of them are dropped from the Lua table when the big map closes
 // or the current scene changes (no rebuild needed for that: the minimap only ever asks for the current scene). Their
@@ -93,12 +94,13 @@ internal sealed partial class MapMarkers
         for (int i = 0; i < n; i++)
         {
             var ap = (AtlasPoint)_cands[i];
-            _keys[i] = ((long)ap.Chip << 40) | ap.Id;
+            _keys[i] = CapKey(ap.Chip, ap.Id);
             _idx[i] = i;
         }
         Array.Sort(_keys, _idx, 0, n);
         _job.Clear();
-        int take = Math.Min(n, MapCap);
+        int take = Math.Min(n, MapCapBrowsed);
+        LogCap(scene, take, n);
         for (int k = 0; k < take; k++)
         {
             var p = (AtlasPoint)_cands[_idx[k]];

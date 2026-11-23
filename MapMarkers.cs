@@ -21,8 +21,9 @@ namespace Stellar.Atlas;
 // every unit comes back with the placeholder sprite until our pass re-skins it (in-game 2026-11-23: a nearest-300 set
 // that followed the player re-dispatched every few metres → minimap icons blinked + repeated 100 ms hitches). So the set
 // must NOT depend on where the player stands: it is every point passing the SHOW filters (minus opened / not-here /
-// stale) in a FIXED order — chests first, then by group, then by point id — capped at MapCap. Live entities the server
-// doesn't know are remembered for the scene once seen (they don't drop out when they leave AOI). The set changes only
+// stale) in a FIXED order by value (CapKey: Legendary, Epic, Other, Common, then gathering; then point id), capped at
+// MapCap. Live entities the server doesn't know are remembered for the scene once seen (they don't drop out when they
+// leave AOI). The set changes only
 // for reasons the player expects: new scene / new server data, a chip toggled, a chest opened or hidden, a new
 // live-only find. Changes are coalesced: one dispatch at most every DispatchGap seconds, never while a push is running.
 //
@@ -40,7 +41,9 @@ namespace Stellar.Atlas;
 // Uid = 900000000 + n (KB recipe).
 internal sealed partial class MapMarkers
 {
-    private const int   MapCap         = 300;
+    private const int   MapCap         = 300;    // current scene (big map AND minimap)
+    private const int   MapCapBrowsed  = 500;    // another map browsed on the big map (never on the minimap)
+    private const float FilterHold     = 1.2f;   // a chip toggle waits this long (restarted per toggle) → one rebuild per burst
     private const int   BatchSize      = 25;
     private const int   BatchesPerTick = 1;
     private const float SelectGap      = 2f;     // re-check the set (cheap, no Lua) this often
@@ -233,7 +236,7 @@ internal sealed partial class MapMarkers
             return;
         }
         if (TickOther(now, mask)) return;   // another map browsed on the big map (MapMarkers.OtherScenes.cs)
-        if (!dataReady || now - _lastSelectAt < SelectGap) return;
+        if (!dataReady || now - _lastSelectAt < SelectGap || now < _filterHoldUntil) return;
         // Re-selected every SelectGap (one pass over the scene's points + a sort of a few thousand longs, sub-ms, no
         // Lua); pushed only when the set (ids + chips) changed AND the last map rebuild is ≥ DispatchGap ago — changes
         // inside the gap are picked up by a later select (coalesced).
@@ -306,7 +309,7 @@ internal sealed partial class MapMarkers
     }
 
     // The shown set: server points (not stale / opened / not-here) + live-only finds of this scene, filtered by the SHOW
-    // chips, in a fixed order (chip, then id) capped at MapCap. Independent of the player's position; `py` only fills the
+    // chips, in a fixed order by value (CapKey) capped at MapCap. Independent of the player's position; `py` only fills the
     // height of points that have none (it doesn't enter the signature). Fills _job and its signature.
     private void Select(int scene, float py, int mask, NearestModel model, Dictionary<long, LiveEnt> live, OpenedStore opened)
     {
@@ -339,7 +342,7 @@ internal sealed partial class MapMarkers
             Chip chip; long id;
             if (_cands[i] is AtlasPoint ap) { chip = ap.Chip; id = ap.Id; }
             else { var en = ((KeyValuePair<long, Entry>)_cands[i]).Value; chip = en.Chip; id = en.N; }
-            _keys[i] = ((long)chip << 40) | id;   // chests (enum 0-3) first, then the gathering groups; then id
+            _keys[i] = CapKey(chip, id);
             _idx[i] = i;
         }
         Array.Sort(_keys, _idx, 0, n);
@@ -348,6 +351,7 @@ internal sealed partial class MapMarkers
         _jobHidden.Clear();
         ulong sig = 1469598103934665603UL, sigAll = sig;
         int take = Math.Min(n, MapCap);
+        LogCap(scene, take, n);
         for (int k = 0; k < take; k++)
         {
             var c = _cands[_idx[k]];
@@ -372,6 +376,34 @@ internal sealed partial class MapMarkers
         _jobSig = sig ^ (ulong)scene;
         _jobSigAll = sigAll ^ (ulong)scene;
     }
+
+    // Order inside the cap = by value, position-independent (so walking never changes the set): Legendary → Epic →
+    // Other chests → Common → Herbs → Ore → Fishing → Books, then point id (stable). In-game 2026-11-23: with "chests
+    // first in enum order" a browsed Asteria Plains (~470 C/E/L chests) filled the 300 cap with Common tiles only.
+    private static long CapKey(Chip chip, long id) => ((long)Rank(chip) << 40) | id;
+
+    private static int Rank(Chip c) => c switch
+    {
+        Chip.Luxurious => 0, Chip.Exquisite => 1, Chip.OtherChests => 2, Chip.Common => 3,
+        Chip.Herbs => 4, Chip.Ore => 5, Chip.Fishing => 6, _ => 7,
+    };
+
+    // "[Atlas] scene S: showing N of M points (cap)" — logged when the truncation changes, not every 2 s re-check.
+    private int _capLogScene, _capLogTotal;
+
+    private void LogCap(int scene, int shown, int total)
+    {
+        if (shown >= total || (scene == _capLogScene && total == _capLogTotal)) return;
+        _capLogScene = scene; _capLogTotal = total;
+        _services.Log.Info($"[Atlas] scene {scene}: showing {shown} of {total} points (cap)");
+    }
+
+    // A chip toggle: hold the next re-check for FilterHold, restarted by each further toggle, so a quick burst of clicks
+    // ends in ONE map rebuild (in-game 2026-11-23: Common, Epic, Legendary in a row gave two). Scene loads and new
+    // server data don't go through here and keep their timing.
+    private float _filterHoldUntil;
+
+    public void NoteFilterChanged(float now) => _filterHoldUntil = now + FilterHold;
 
     private bool AllCommitted(List<Entry> job)
     {
