@@ -14,7 +14,7 @@ namespace Stellar.Atlas;
 // notice; per character: SHOW chips). Pieces:
 //
 // Sharing is ALWAYS ON (user decision 2026-11-23): using Atlas means sharing what you find; the player is informed by the
-// first-open notice (and the README / launcher description), and nothing is sent before that notice has been on screen.
+// first-open notice (and the README / launcher description), and nothing is sent before they click its "Got it".
 // To stop sharing, turn Atlas off in the launcher.
 //   Plugin.Tick.cs            scene / player / scan / fetch / report scheduling (world-only, ≤5 Hz)
 //   Plugin.Guide.cs           the game's guide marker + "just opened" flash
@@ -46,8 +46,7 @@ public sealed partial class Plugin : IStellarPlugin
     private readonly MapMarkers    _map;
     private readonly GroundProbe   _ground;
 
-    private bool _noticeSeen;         // the first-open notice was acknowledged ("Got it")
-    private bool _noticeShown;        // the notice has been on screen at least once (this session or before)
+    private bool _noticeSeen;         // the first-open notice was acknowledged ("Got it") — gates every report
     private long _charId;
     private int  _mask = AtlasGroups.DefaultMask;   // SHOW chips, per character
 
@@ -65,7 +64,6 @@ public sealed partial class Plugin : IStellarPlugin
             _cfg.SaveQuiet();
         }
         _noticeSeen  = _cfg.Get<bool>("notice_seen", false);
-        _noticeShown = _noticeSeen || _cfg.Get<bool>("notice_shown", false);
         string url   = _cfg.Get<string>("server_url", DefaultServerUrl) ?? DefaultServerUrl;
 
         _lua     = new GameLua(services);
@@ -123,7 +121,6 @@ public sealed partial class Plugin : IStellarPlugin
     private void OpenWindow()
     {
         _centerer.OpenCentred();
-        if (!_noticeSeen && !_noticeShown) { _noticeShown = true; _cfg.Set<bool>("notice_shown", true); _cfg.Save(); }
         RecomputeNearest();
     }
 
@@ -150,15 +147,15 @@ public sealed partial class Plugin : IStellarPlugin
     }
 
     // ── persisted settings ────────────────────────────────────────────────────────────────────────────────────────
-    // Reports go out whenever Atlas runs, once the first-open notice has been on screen (never before the player was told
-    // what is shared).
-    private bool SharingActive => _noticeShown;
+    // Reports go out whenever Atlas runs, once the player clicked "Got it" on the first-open notice (user decision
+    // 2026-11-23: "seen" = acknowledged, not merely displayed). Before that nothing is queued or sent; on the click
+    // everything already in range is queued at once (Plugin.Tick.cs TickSharingEdge).
+    private bool SharingActive => _noticeSeen;
 
     private void AcknowledgeNotice()
     {
-        _noticeSeen = _noticeShown = true;
+        _noticeSeen = true;
         _cfg.Set<bool>("notice_seen", true);
-        _cfg.Set<bool>("notice_shown", true);
         _cfg.Save();
     }
 

@@ -96,7 +96,7 @@ public sealed partial class Plugin
         {
             _queueLogAt = now;
             _services.Log.Info($"[Atlas] report queue: {_reports.Status()} · sharing={(SharingActive ? "on" : "off")} " +
-                               $"(notice={_noticeShown}, key={(AtlasClient.HasKey ? "set" : "none")}, scene={_scene})");
+                               $"(notice acknowledged={_noticeSeen}, key={(AtlasClient.HasKey ? "set" : "none")}, scene={_scene})");
         }
         if (_scene > 0 && !_fetchInFlight && _lastFetchAt >= 0f && now - _lastFetchAt >= RefreshSeconds) Fetch();
         TickFlash(now);
@@ -152,8 +152,8 @@ public sealed partial class Plugin
 
     // Reports were only queued from the scanner's Appeared event, so everything already in range when sharing became
     // active (the first-open notice shown with chests in view) was never sent (in-game 2026-11-23: server had 0
-    // reports). On the rising edge of SharingActive — the notice first shown, or the first world tick of a session that
-    // already showed it — queue every tracked live entity once (the queue still dedupes per uuid per session).
+    // reports). On the rising edge of SharingActive — "Got it" clicked, or the first world tick of a session that already
+    // acknowledged it — queue every tracked live entity once (the queue still dedupes per uuid per session).
     private bool _wasSharing;
 
     private void TickSharingEdge()
