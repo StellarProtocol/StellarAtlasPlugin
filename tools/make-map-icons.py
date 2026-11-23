@@ -26,7 +26,7 @@ SS = 16
 BORDER = (0x2a, 0x21, 0x18, 255)
 WHITE = (255, 255, 255, 255)
 
-# name → (fill, glyph). Names match the C# Chip enum (lower-case).
+# name → (fill, glyph). Names match the C# Chip enum (lower-case); only the 8 SHOW chips are drawn.
 TILES = {
     "common":      (0x98a2a7, "chest"),
     "exquisite":   (0xc8763a, "chest"),
@@ -35,15 +35,7 @@ TILES = {
     "herbs":       (0x8ce68c, "dot"),
     "ore":         (0xb385ff, "dot"),
     "fishing":     (0x66d9ff, "dot"),
-    "npc":         (0xf0a8d0, "dot"),
-    "monster":     (0xff6b6b, "dot"),
-    "reading":     (0xd9c48c, "dot"),
-    "traversal":   (0x7fe0c8, "dot"),
-    "teleport":    (0xa0a8ff, "dot"),
-    "activity":    (0xffb366, "dot"),
-    "engram":      (0xe6e66b, "dot"),
-    "resonance":   (0xc79bff, "dot"),
-    "other":       (0xb0b0b0, "dot"),
+    "books":       (0xe0c98a, "dot"),
 }
 
 

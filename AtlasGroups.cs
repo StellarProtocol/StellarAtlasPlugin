@@ -5,33 +5,48 @@ namespace Stellar.Atlas;
 // The SHOW chips, the server's group/subtype names (StellarAtlasServer README "Point model") and how a live game entity is
 // classified into them. One chip per filterable bucket; a point's chip is derived once when it is parsed/seen, so the
 // per-refresh filter is a single bit test.
+//
+// SHOW redesign (user-approved option A, 2026-11-23): two sub-rows, CHESTS (Common / Epic / Legendary / Other) and
+// GATHERING & COLLECTIBLES (Herbs / Ore / Fishing / Books). NPCs, monsters, teleports, activities, traversal and misc
+// server groups are DROPPED (the game's own map already marks them): they map to Chip.Hidden, which no chip can turn
+// on, so they are never listed, guided to or drawn on the game map. Reporting is unaffected (live classification never
+// yields Hidden).
+//
+// Enum values = bit positions in the persisted per-character mask, so they must never be renumbered: Common..Fishing keep
+// their old bits 0-6; Books takes the old "Reading" bit 9 (a player who had Books/reading on keeps it).
 internal enum Chip : byte
 {
-    Common, Exquisite, Luxurious, OtherChests, Herbs, Ore, Fishing,
-    // "More…" groups (hidden behind the More… chip, all OFF by default)
-    Npc, Monster, Reading, Traversal, Teleport, Activity, Engram, Resonance, Other,
+    Common = 0, Exquisite = 1, Luxurious = 2, OtherChests = 3, Herbs = 4, Ore = 5, Fishing = 6,
+    Books = 9,
+    Hidden = 15,
 }
 
 internal static class AtlasGroups
 {
-    public const int ChipCount = 16;
-    // Bit 31 of the persisted mask = the More… chip is expanded (not a filter).
-    public const int MoreOpenBit = 1 << 31;
-    // Approved prototype: the four chest chips ON, everything else OFF.
-    public const int DefaultMask = (1 << (int)Chip.Common) | (1 << (int)Chip.Exquisite) | (1 << (int)Chip.Luxurious)
-                                   | (1 << (int)Chip.OtherChests);
+    public const int ChipCount = 16;   // array size for per-chip caches (indexed by the enum value)
+    // Chests Common / Epic / Legendary ON, everything else OFF (Other chests OFF since the redesign; an existing saved
+    // mask keeps its own bits — see MigrateMask).
+    public const int DefaultMask = (1 << (int)Chip.Common) | (1 << (int)Chip.Exquisite) | (1 << (int)Chip.Luxurious);
+    private const int KeptBits = (1 << (int)Chip.Common) | (1 << (int)Chip.Exquisite) | (1 << (int)Chip.Luxurious)
+                                 | (1 << (int)Chip.OtherChests) | (1 << (int)Chip.Herbs) | (1 << (int)Chip.Ore)
+                                 | (1 << (int)Chip.Fishing) | (1 << (int)Chip.Books);
+
+    // A mask saved before the redesign: keep the bits of chips that still exist, drop the old More… groups and the
+    // More…-expanded flag (bit 31).
+    public static int MigrateMask(int saved) => saved & KeptBits;
 
     // Server group names (model.KnownGroups).
     public const string GChest = "chest", GOre = "ore", GHerb = "herb", GFishing = "fishing";
 
-    public static readonly Chip[] MainChips = { Chip.Common, Chip.Exquisite, Chip.Luxurious, Chip.OtherChests, Chip.Herbs, Chip.Ore, Chip.Fishing };
-    public static readonly Chip[] MoreChips = { Chip.Npc, Chip.Monster, Chip.Reading, Chip.Traversal, Chip.Teleport, Chip.Activity, Chip.Engram, Chip.Resonance, Chip.Other };
+    public static readonly Chip[] ChestChips   = { Chip.Common, Chip.Exquisite, Chip.Luxurious, Chip.OtherChests };
+    public static readonly Chip[] GatherChips  = { Chip.Herbs, Chip.Ore, Chip.Fishing, Chip.Books };
+    public static readonly Chip[] ShownChips   = { Chip.Common, Chip.Exquisite, Chip.Luxurious, Chip.OtherChests,
+                                                   Chip.Herbs, Chip.Ore, Chip.Fishing, Chip.Books };
 
     public static bool IsChest(Chip c) => c <= Chip.OtherChests;
 
-    // Fixed semantic colours (SDL §3 "Chips"). Chest rarities (user-approved 2026-11-23, overrides the prototype's
-    // dots): silver / copper (game "Epic") / gold (game "Legendary") / coral — the same colours as the map marker tiles
-    // (tools/make-map-icons.py). The More… groups are new (not in the prototype).
+    // Fixed semantic colours (SDL §3 "Chips"). Chest rarities: silver / copper (game "Epic") / gold (game "Legendary") /
+    // coral — the same colours as the map marker tiles (tools/make-map-icons.py) and chip dots (tools/icons/gen-dot-icons.py).
     public static ColorRgba Color(Chip c) => c switch
     {
         Chip.Common      => Rgb(0x98a2a7),
@@ -41,20 +56,11 @@ internal static class AtlasGroups
         Chip.Herbs       => Rgb(0x8ce68c),
         Chip.Ore         => Rgb(0xb385ff),
         Chip.Fishing     => Rgb(0x66d9ff),
-        Chip.Npc         => Rgb(0xf0a8d0),
-        Chip.Monster     => Rgb(0xff6b6b),
-        Chip.Reading     => Rgb(0xd9c48c),
-        Chip.Traversal   => Rgb(0x7fe0c8),
-        Chip.Teleport    => Rgb(0xa0a8ff),
-        Chip.Activity    => Rgb(0xffb366),
-        Chip.Engram      => Rgb(0xe6e66b),
-        Chip.Resonance   => Rgb(0xc79bff),
+        Chip.Books       => Rgb(0xe0c98a),
         _                => Rgb(0xb0b0b0),
     };
 
-    public static readonly ColorRgba MoreDot = Rgb(0x9b8aa5);   // the More… chip's own dot (prototype)
-
-    // Embedded map tile name stem (Resources/map/map-<stem>-<px>.png).
+    // Embedded art name stem (Resources/map/map-<stem>-<px>.png, Resources/dots/dot-<stem>-<px>.png).
     public static string MapIconStem(Chip c) => c.ToString().ToLowerInvariant();
 
     public static string LabelKey(Chip c) => c switch
@@ -66,18 +72,11 @@ internal static class AtlasGroups
         Chip.Herbs       => "at.chip.herbs",
         Chip.Ore         => "at.chip.ore",
         Chip.Fishing     => "at.chip.fishing",
-        Chip.Npc         => "at.chip.npc",
-        Chip.Monster     => "at.chip.monster",
-        Chip.Reading     => "at.chip.reading",
-        Chip.Traversal   => "at.chip.traversal",
-        Chip.Teleport    => "at.chip.teleport",
-        Chip.Activity    => "at.chip.activity",
-        Chip.Engram      => "at.chip.engram",
-        Chip.Resonance   => "at.chip.resonance",
-        _                => "at.chip.other",
+        _                => "at.chip.books",
     };
 
-    // Server row (group, subtype) → chip. Subtypes per the README mapping table; anything unknown → Other.
+    // Server row (group, subtype) → chip. Subtypes per the README mapping table. "Collectibles" = reading material,
+    // engrams and resonance points → Books. Every other group → Hidden (never shown).
     public static Chip FromServer(string group, string subtype) => group switch
     {
         GChest => subtype switch
@@ -90,19 +89,12 @@ internal static class AtlasGroups
         GHerb       => Chip.Herbs,
         GOre        => Chip.Ore,
         GFishing    => Chip.Fishing,
-        "npc"       => Chip.Npc,
-        "monster"   => Chip.Monster,
-        "reading"   => Chip.Reading,
-        "traversal" => Chip.Traversal,
-        "teleport"  => Chip.Teleport,
-        "activity"  => Chip.Activity,
-        "engram"    => Chip.Engram,
-        "resonance" => Chip.Resonance,
-        _           => Chip.Other,
+        "reading" or "engram" or "resonance" => Chip.Books,
+        _           => Chip.Hidden,
     };
 
     // Only these groups carry a CollectionTable id in game_config_id (questlog "collectable"), so only they may resolve
-    // a localized name through CollectionTableMgr — an npc/monster id would look up an unrelated collection row.
+    // a localized name through CollectionTableMgr — a book/engram id would look up an unrelated collection row.
     public static bool HasCollectionConfig(Chip c) => c <= Chip.Ore;
 
     // ── live entity classification (Auto-Gather-and-Interaction.md §2 + §Chest Finder) ────────────────────────────
@@ -138,7 +130,7 @@ internal static class AtlasGroups
         if (lifeProId == 102) { group = GOre; subtype = "mineral"; chip = Chip.Ore; return true; }
         if (lifeProId == 103) { group = GOre; subtype = "gem"; chip = Chip.Ore; return true; }
         if (type == 1) { group = GOre; subtype = "mineral"; chip = Chip.Ore; return true; }   // Stokes Mine: Type 1, no life row
-        group = subtype = ""; chip = Chip.Other;
+        group = subtype = ""; chip = Chip.Hidden;
         return false;
     }
 

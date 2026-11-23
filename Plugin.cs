@@ -175,13 +175,14 @@ public sealed partial class Plugin : IStellarPlugin
     private void OnCharacter(long charId)
     {
         _charId = charId;
-        _mask = charId != 0 ? _cfg.Get<int>(MaskKey(charId), AtlasGroups.DefaultMask) : AtlasGroups.DefaultMask;
+        // A mask saved before the SHOW redesign keeps the chips that still exist (MigrateMask); a new character gets the
+        // new defaults (Other chests OFF).
+        _mask = charId != 0 ? AtlasGroups.MigrateMask(_cfg.Get<int>(MaskKey(charId), AtlasGroups.DefaultMask)) : AtlasGroups.DefaultMask;
         _opened.SetCharacter(charId);
         RecomputeNearest();
     }
 
     private bool ChipOn(Chip c) => (_mask & (1 << (int)c)) != 0;
-    private bool MoreOpen => (_mask & AtlasGroups.MoreOpenBit) != 0;
 
     private void ToggleMaskBit(int bit)
     {
