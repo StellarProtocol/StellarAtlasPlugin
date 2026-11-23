@@ -355,11 +355,13 @@ internal sealed partial class MapMarkers
 
     private static double ElapsedMs(long t0) => (Stopwatch.GetTimestamp() - t0) * 1000.0 / Stopwatch.Frequency;
 
-    private void Slow(string what, long t0)
+    // Returns true when it logged (the caller may add one Info detail line under the same cap).
+    private bool Slow(string what, long t0)
     {
         double ms = ElapsedMs(t0);
-        if (ms <= SlowMs || _slowLogs >= MaxSlowLogs) return;
+        if (ms <= SlowMs || _slowLogs >= MaxSlowLogs) return false;
         _slowLogs++;
         _services.Log.Warning($"[Atlas] slow map step: {what} {ms:F1} ms");
+        return true;
     }
 }

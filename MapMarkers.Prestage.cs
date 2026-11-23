@@ -112,8 +112,8 @@ internal sealed partial class MapMarkers
             if (_bScene == _curScene) { _bScene = 0; return false; }                     // we moved there: Select's now
             if (_bMask != mask) { Enqueue(_bScene, front: true); _bScene = 0; return false; }   // filter changed: redo
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-            if (!ContinueBuild(t0)) { Slow("prestage build slice", t0); return true; }
-            Slow("prestage build slice", t0);
+            if (!ContinueBuild(t0)) { SlowSlice(t0); return true; }
+            SlowSlice(t0);
             int scene = _bScene;
             _bScene = 0;
             _job.Clear();
@@ -184,7 +184,7 @@ internal sealed partial class MapMarkers
     //
     // SLICED (in-game 2026-11-23: "prestage build 12.1 ms" for scene 7, 486 → 300): BeginBuild does the cheap part —
     // filter + sort of ≤ a few thousand longs — and ContinueBuild turns the ordered points into entries within
-    // StageBudgetMs per tick (the cost is the names: ServerName asks the game's tables once per new config id, and the
+    // StageBudgetMs per tick (names resolved first in batched lookups — see below — then the
     // opened / not-here check). Own buffers (_b*), so the current scene's Select may run between slices.
     private int _bScene, _bMask, _bPos, _bTake;
     private AtlasPoint[] _bPts = Array.Empty<AtlasPoint>();
@@ -192,6 +192,22 @@ internal sealed partial class MapMarkers
     private int[] _bIdx = new int[256];
     private readonly List<Entry> _bJob = new(MapCap);
     private ulong _bSig, _bSigAll;
+
+    // Names (in-game 2026-11-23: "prestage build slice 10.7 ms" even with one first-time lookup per slice — a lookup is
+    // far dearer than the ~1 ms assumed). BeginBuild lists the scene's config ids with no cached name; ContinueBuild
+    // resolves them FIRST, in ONE Lua call per tick for an adaptive number of ids (GameLua.CfgBatch: one Lua entry
+    // amortised over many rows), each such tick doing nothing else. The entry slices that follow make no Lua call
+    // (a name still unknown falls back to the server label). A build tick never shares a tick with a push: Tick runs
+    // a push step OR prestage work.
+    private const int NameStartN = 4, NameMaxN = 32;
+    private const double NameTargetMs = 1.5;
+    private readonly List<int> _bNeed = new();
+    private readonly HashSet<int> _bNeedSet = new();
+    private int _bNeedPos, _nameN = NameStartN;
+    private double _nameMsPerId = -1;
+    // what the last slice did, for the slow-step detail line
+    private int _sliceLookupN, _sliceLookupFirst, _slicePoints;
+    private double _sliceLookupMs;
 
     private void BeginBuild(int scene, AtlasPoint[] points, int mask)
     {
@@ -210,30 +226,41 @@ internal sealed partial class MapMarkers
         _bTake = Math.Min(n, MapCap);
         LogCap(scene, _bTake, n);
         _bJob.Clear();
+        _bNeed.Clear(); _bNeedSet.Clear(); _bNeedPos = 0;
+        if (_modelRef != null)
+            for (int j = 0; j < _bTake; j++)
+            {
+                var p = points[_bIdx[j]];
+                if (_modelRef.NeedsName(p) && _bNeedSet.Add(p.ConfigId)) _bNeed.Add(p.ConfigId);
+            }
         _bSig = _bSigAll = 1469598103934665603UL;
     }
 
-    // Returns true when the build is complete.
-    // In-game 2026-11-23 ("prestage build slice 8.8 ms" after the first slicing): the clock was read every 8 points,
-    // and each first-time config id costs a Lua table lookup (~1 ms). Now the clock is checked after EVERY point, and a
-    // first-time lookup runs only as the slice's first one or while under half the budget — otherwise the slice
-    // stops BEFORE that point and the next tick resolves it (names are cached for the session, so this is front-loaded).
+    // Returns true when the build is complete. Clock checked after EVERY point (in-game: every 8th → 8.8 ms slices).
     private bool ContinueBuild(long t0)
     {
-        int done = 0, lookups = 0;
+        _sliceLookupN = 0; _slicePoints = 0;
+        if (_bNeedPos < _bNeed.Count && _modelRef != null)
+        {
+            // one batched name lookup, alone on this tick
+            int n = Math.Min(_nameN, _bNeed.Count - _bNeedPos);
+            _sliceLookupFirst = _bNeed[_bNeedPos];
+            long l0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            int got = _modelRef.ResolveNames(_bNeed, _bNeedPos, n);
+            _sliceLookupMs = ElapsedMs(l0);
+            _sliceLookupN = n;
+            if (got < 0) _bNeedPos = _bNeed.Count;   // Lua not ready → labels this time (the ids stay uncached)
+            else { _bNeedPos += n; _nameN = Adapt(ref _nameMsPerId, _sliceLookupMs, n, NameTargetMs, NameMaxN); }
+            return false;
+        }
         while (_bPos < _bTake)
         {
-            if (done > 0 && ElapsedMs(t0) >= StageBudgetMs) return false;
-            var p = _bPts[_bIdx[_bPos]];
+            if (_slicePoints > 0 && ElapsedMs(t0) >= StageBudgetMs) return false;
+            var p = _bPts[_bIdx[_bPos++]];
+            _slicePoints++;
             bool hidden = _openedRef != null && _openedRef.MatchesIn(_bScene, p);
             string name = p.Label;
-            if (!hidden && _modelRef != null && !_modelRef.TryServerNameCached(p, out name))
-            {
-                if (lookups > 0 && ElapsedMs(t0) >= StageBudgetMs * 0.5) return false;   // this point first, next tick
-                lookups++;
-                name = _modelRef.ServerName(p);
-            }
-            _bPos++; done++;
+            if (!hidden && _modelRef != null) _modelRef.TryServerNameCached(p, out name);   // never a Lua call here
             _bSigAll = (_bSigAll ^ (ulong)p.Id) * 1099511628211UL;
             _bSigAll = (_bSigAll ^ (ulong)p.Chip) * 1099511628211UL;
             if (hidden) continue;
@@ -244,6 +271,16 @@ internal sealed partial class MapMarkers
         }
         _bPts = Array.Empty<AtlasPoint>();   // don't keep the scene's points alive
         return true;
+    }
+
+    private void SlowSlice(long t0)
+    {
+        if (!Slow("prestage build slice", t0)) return;
+        if (_sliceLookupN > 0)
+            _services.Log.Info($"[Atlas] slice detail: name lookup of {_sliceLookupN} config ids (first {_sliceLookupFirst}) " +
+                $"{_sliceLookupMs:F1} ms = {_sliceLookupMs / _sliceLookupN:F2} ms/id; next batch {_nameN}");
+        else
+            _services.Log.Info($"[Atlas] slice detail: {_slicePoints} points, no Lua");
     }
 
     // PushStep finished a prestaged scene: remember it; rebuild only if it is on screen (browsed on the big map).

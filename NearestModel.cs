@@ -209,6 +209,10 @@ internal sealed class NearestModel
         return true;
     }
 
+    // Needs a first-time table lookup for its name (MapMarkers.Prestage.cs resolves those in batches)?
+    public bool NeedsName(AtlasPoint p) => p.ConfigId > 0 && AtlasGroups.HasCollectionConfig(p.Chip) && !_lua.HasCfg(p.ConfigId);
+    public int ResolveNames(List<int> ids, int start, int count) => _lua.CfgBatch(ids, start, count);
+
     public string ServerName(AtlasPoint p)
     {
         if (p.ConfigId > 0 && AtlasGroups.HasCollectionConfig(p.Chip))

@@ -36,6 +36,24 @@ internal sealed class GameLua
         "  if lr ~= nil then rawset(_G,'__at_life', lr.LifeProId) end" +
         " end) end" +
         " end)" +
+        // Many ids in ONE call (prestage name resolution): a negative id also asks LifeCollectListTable. Result =
+        // "id<TAB>ok<TAB>type<TAB>life<TAB>name" lines in __at_cfgs (tabs / newlines in names replaced by spaces).
+        " rawset(_G,'__atlas_cfgs',function(...)" +
+        " local out, args = {}, {...}" +
+        " for i = 1, #args do local id = args[i] local life = id < 0 if life then id = -id end" +
+        "  local ok, nm, ty, lp = 0, '', -1, 0" +
+        "  pcall(function()" +
+        "   local row = Z.TableMgr.GetRow(\"CollectionTableMgr\", id)" +
+        "   if row ~= nil then ok = 1 ty = row.Type nm = row.CollectionName end" +
+        "  end)" +
+        "  if life then pcall(function()" +
+        "   local lr = Z.TableMgr.GetRow(\"LifeCollectListTableMgr\", id)" +
+        "   if lr ~= nil then lp = lr.LifeProId end" +
+        "  end) end" +
+        "  out[#out + 1] = id .. '\\t' .. ok .. '\\t' .. tostring(ty) .. '\\t' .. tostring(lp) .. '\\t' .. (string.gsub(tostring(nm or ''), '[\\t\\n]', ' '))" +
+        " end" +
+        " rawset(_G,'__at_cfgs', table.concat(out, '\\n'))" +
+        " end)" +
         " rawset(_G,'__atlas_scene',function(id)" +
         " rawset(_G,'__at_scene',nil)" +
         " pcall(function()" +
@@ -98,6 +116,35 @@ internal sealed class GameLua
         else info = new CfgInfo("", -1, 0, true);   // no row: Known=true so it is not re-asked
         _cfg[configId] = info;
         return info;
+    }
+
+    // Resolves ids[start .. start+count) in ONE Lua call and caches them (misses included, like Cfg). Returns how many
+    // came back, or -1 when Lua isn't ready (nothing cached → asked again later). Event-driven (a prestage build tick),
+    // so the chunk / readback allocation is fine.
+    public int CfgBatch(List<int> ids, int start, int count)
+    {
+        if (count <= 0) return 0;
+        var sb = new System.Text.StringBuilder("rawset(_G,'__at_cfgs',nil) __atlas_cfgs(");
+        for (int i = start; i < start + count; i++)
+        {
+            int id = ids[i];
+            if (i > start) sb.Append(',');
+            sb.Append((AtlasGroups.IsChestId(id, -1) ? id : -id).ToString(CultureInfo.InvariantCulture));
+        }
+        if (!Call(sb.Append(')').ToString())) return -1;
+        var text = Lua.ReadGlobalString("__at_cfgs");
+        if (text == null) return -1;
+        int got = 0;
+        foreach (var line in text.Split('\n'))
+        {
+            var f = line.Split('\t', 5);
+            if (f.Length < 5 || !int.TryParse(f[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int id)) continue;
+            int.TryParse(f[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int type);
+            int.TryParse(f[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int life);
+            _cfg[id] = f[1] == "1" ? new CfgInfo(f[4], type, life, true) : new CfgInfo("", -1, 0, true);
+            got++;
+        }
+        return got;
     }
 
     public string SceneName(int sceneId)

@@ -12,8 +12,8 @@ namespace Stellar.Atlas;
 // and append one Position flag per point (TypeId 303 = the Position Sharing scene tag; Id unique; Layer = the arg). The
 // game then draws them, lists them in its nearby pick list and Info panel (Name) with its own Navigate / Track buttons.
 //
-// Data flow: C# picks the shown set for the scene and pushes it into a Lua staging table in bounded batches (BatchSize
-// per call, one call per 5 Hz tick), commits it as _G.__atlas_map[sceneId] and dispatches MapFlagShowListChanged so both
+// Data flow: C# picks the shown set for the scene and pushes it into a Lua staging table in bounded batches of flat
+// numbers (MapMarkers.Push.cs: BatchSize for the current scene, adaptive for prestaging), commits it as _G.__atlas_map[sceneId] and dispatches MapFlagShowListChanged so both
 // maps rebuild. Bridge chunks don't share plain globals → everything lives under rawset(_G, …). Every helper is compiled
 // once (Plugin-Performance-Rules.md §4).
 //
@@ -70,9 +70,10 @@ internal sealed partial class MapMarkers
         "    local m = rawget(_G,'__atlas_map')" +
         "    local pts = m and m[sceneId]" +
         "    if pts == nil then return end" +
-        "    for i = 1, #pts do local p = pts[i]" +
-        "     list[#list + 1] = {Id = 90000000000000 + sceneId * 1000000000 + p[1], Uid = 900000000 + p[1], Type = -1, FlagType = E.MapFlagType.Position," +
-        "      TypeId = 303, Layer = layer, Pos = Vector3.New(p[2], p[3], p[4]), IconPath = 'ui/atlas/npc/talk_icon_box', Name = p[5]}" +
+        "    local nm = rawget(_G,'__atlas_names') or {}" +
+        "    for i = 1, #pts - 4, 5 do local n = pts[i]" +
+        "     list[#list + 1] = {Id = 90000000000000 + sceneId * 1000000000 + n, Uid = 900000000 + n, Type = -1, FlagType = E.MapFlagType.Position," +
+        "      TypeId = 303, Layer = layer, Pos = Vector3.New(pts[i + 1], pts[i + 2], pts[i + 3]), IconPath = 'ui/atlas/npc/talk_icon_box', Name = nm[pts[i + 4]] or ''}" +
         "    end" +
         "   end)" +
         "   return list" +
@@ -81,9 +82,11 @@ internal sealed partial class MapMarkers
         " rawset(_G,'__at_mok',true)" +
         " end)" +
         " rawset(_G,'__atlas_mstage',function() rawset(_G,'__atlas_stage',{}) end)" +
-        " rawset(_G,'__atlas_mpush',function(...)" +
+        " rawset(_G,'__atlas_mpush',function(f, names)" +
         " local a = rawget(_G,'__atlas_stage') if a == nil then return end" +
-        " for i = 1, select('#', ...) do a[#a + 1] = (select(i, ...)) end" +
+        " if names ~= nil then local t = rawget(_G,'__atlas_names') if t == nil then t = {} rawset(_G,'__atlas_names', t) end" +
+        "  for i = 1, #names - 1, 2 do t[names[i]] = names[i + 1] end end" +
+        " local c = #a for i = 1, #f do a[c + i] = f[i] end" +
         " end)" +
         " rawset(_G,'__atlas_mcommit',function(sid)" +
         " local m = rawget(_G,'__atlas_map') or {} m[sid] = rawget(_G,'__atlas_stage') or {}" +
@@ -96,7 +99,7 @@ internal sealed partial class MapMarkers
         " rawset(_G,'__atlas_cur', cur) rawset(_G,'__atlas_other', nil)" +
         " end)" +
         " rawset(_G,'__atlas_mreset',function()" +
-        " rawset(_G,'__atlas_map', {}) rawset(_G,'__atlas_other', nil)" +
+        " rawset(_G,'__atlas_map', {}) rawset(_G,'__atlas_names', {}) rawset(_G,'__atlas_other', nil)" +
         " end)" +
         " rawset(_G,'__atlas_mdispatch',function()" +
         " pcall(function() Z.EventMgr:Dispatch(Z.ConstValue.MapFlagShowListChanged) end)" +
@@ -166,6 +169,7 @@ internal sealed partial class MapMarkers
         if (Lua.TryReadGlobalBool("__atlas_has", out var has) && has) return true;
         Lua.DoString(Defs);
         _installed = false;
+        _nameIdx.Clear();   // Lua state lost → the name table too; later pushes resend every name
         Lua.DoString(guarded);
         return Lua.TryReadGlobalBool("__atlas_has", out has) && has;
     }
@@ -238,7 +242,7 @@ internal sealed partial class MapMarkers
         if (_dispatchPending) { Dispatch(); return; }
         if (_jobPos >= 0) { PushStep(); return; }
         if (!EnsureInstalled(now) || _installedThisTick) return;   // install (prewarm) on its own tick, ahead of any push
-        if (_needReset) { if (Call("__atlas_mreset()")) _needReset = false; return; }
+        if (_needReset) { if (Call("__atlas_mreset()")) { _needReset = false; _nameIdx.Clear(); } return; }
         if (_needSetCur)
         {
             if (Call("__atlas_msetcur(" + scene.ToString(CultureInfo.InvariantCulture) + ")")) _needSetCur = false;
