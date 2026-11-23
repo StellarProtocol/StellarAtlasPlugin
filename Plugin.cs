@@ -40,6 +40,7 @@ public sealed partial class Plugin : IStellarPlugin
     private readonly OpenedStore   _opened;
     private readonly NearestModel  _model;
     private readonly MapMarkers    _map;
+    private readonly GroundProbe   _ground;
 
     private bool _share;              // per install, default ON (user decision); see SharingActive
     private bool _noticeSeen;         // the first-open notice was answered
@@ -64,6 +65,7 @@ public sealed partial class Plugin : IStellarPlugin
         _opened  = new OpenedStore(_client);
         _model   = new NearestModel(_lua);
         _map     = new MapMarkers(services);
+        _ground  = new GroundProbe(services);
         _reports = new ReportQueue(_client, () => _services.Framework.TimeNow, GetInstall, SetInstall, m => _services.Log.Info(m));
         _scanner.Appeared = OnLiveAppeared;
         _scanner.Opened   = OnLiveOpened;

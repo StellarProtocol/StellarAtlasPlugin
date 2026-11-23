@@ -1,10 +1,17 @@
 using System;
+using System.Collections.Generic;
 
 namespace Stellar.Atlas;
 
 // Guiding: clicking a NEAREST row puts the game's own guide marker (world icon + "58m" label, validated in-game) on that
 // point via GameLua.SetGuide. The marker clears itself when the player is within ArriveRadius, on Stop guiding, on a
-// scene change, on logout and on dispose. Server rows without a height use the player's current y.
+// scene change, on logout and on dispose.
+//
+// Marker height, best first (user-approved 2026-11-23): 1. the live entity's y (Seen live) → 2. the server row's y
+// (reported points carry the exact height) → 3. the GROUND under (x, z) from the game's physics (GroundProbe.cs; cached
+// per point, retried every GroundRetrySecs while guiding — physics only streams in near the player) → 4. the player's y.
+// A better height re-sets the goal only when it differs from the placed one by more than 1 m. A guessed height is never
+// reported (reports carry only live entity positions).
 //
 // "Just opened" (prototype 2d): when this character opens a chest, its row shows green "Opened" at the top of the list
 // for FlashSeconds, then leaves; if the guide was on that chest (or had just arrived at it) the guide moves to the next
@@ -15,6 +22,8 @@ public sealed partial class Plugin
     private const float SameRadius      = 5f;    // a live entity this close to a guided server point (same chip) = it
     private const float ArrivedKeepSecs = 60f;   // after arriving, an open within this window still advances the guide
     private const float FlashSeconds    = 2.5f;
+    private const float GroundRetrySecs = 2f;
+    private const float ResetYDelta     = 1f;
 
     private struct GuideState
     {
@@ -22,7 +31,9 @@ public sealed partial class Plugin
         public long Uuid, ServerId;
         public Chip Chip;
         public float X, Y, Z;
-        public bool HasY;
+        public bool HasY;                 // exact height (live entity or server row)
+        public bool HasGround;            // ground height under (x, z) known (GroundY)
+        public float GroundY, NextGroundAt;
         public float ArrivedAt, MarkedY;
     }
 
@@ -47,12 +58,36 @@ public sealed partial class Plugin
             Active = true, Uuid = r.Uuid, ServerId = r.ServerId, Chip = r.Chip,
             X = r.X, Y = r.Y, Z = r.Z, HasY = r.HasY,
         };
+        if (!_guide.HasY) TryGroundHeight(_services.Framework.TimeNow);
         SetMarker();
+    }
+
+    // The height the marker uses now (priority above).
+    private float GuideY() => _guide.HasY ? _guide.Y
+        : _guide.HasGround ? _guide.GroundY
+        : (_scanner.HasPlayerPos ? _scanner.PlayerPos.y : _guide.Y);
+
+    private bool GuideHasHeight => _guide.HasY || _guide.HasGround;
+
+    // Ground under the target: per-point cache first, else one down-cast (≤ every GroundRetrySecs).
+    private readonly Dictionary<long, float> _groundCache = new();
+
+    private long GuideKey() => _guide.ServerId != 0 ? _guide.ServerId : -_guide.Uuid;
+
+    private void TryGroundHeight(float now)
+    {
+        if (_guide.HasY || _guide.HasGround || now < _guide.NextGroundAt) return;
+        _guide.NextGroundAt = now + GroundRetrySecs;
+        long key = GuideKey();
+        if (key != 0 && _groundCache.TryGetValue(key, out float gy)) { _guide.GroundY = gy; _guide.HasGround = true; return; }
+        if (!_scanner.HasPlayerPos || !_ground.TryGround(_guide.X, _guide.Z, _scanner.PlayerPos.y, out gy)) return;
+        _guide.GroundY = gy; _guide.HasGround = true;
+        if (key != 0) _groundCache[key] = gy;
     }
 
     private void SetMarker()
     {
-        float y = _guide.HasY ? _guide.Y : (_scanner.HasPlayerPos ? _scanner.PlayerPos.y : _guide.Y);
+        float y = GuideY();
         _guide.MarkerSet = _lua.SetGuide(_scene, _guide.X, y, _guide.Z);
         _guide.MarkedY = y;
         if (!_guide.MarkerSet) _services.Log.Warning("[Atlas] guide marker could not be set (game Lua not ready?)");
@@ -90,12 +125,18 @@ public sealed partial class Plugin
 
         if (FindLiveTarget() is { } live)
         {
-            bool moved = MathF.Abs(live.X - _guide.X) + MathF.Abs(live.Z - _guide.Z) > 1f || !_guide.HasY;
+            bool moved = MathF.Abs(live.X - _guide.X) + MathF.Abs(live.Z - _guide.Z) > 1f
+                         || MathF.Abs(live.Y - _guide.MarkedY) > ResetYDelta;
             _guide.Uuid = live.Uuid; _guide.X = live.X; _guide.Y = live.Y; _guide.Z = live.Z; _guide.HasY = true;
             if (moved && _guide.MarkerSet) SetMarker();
         }
+        else if (!_guide.HasY && !_guide.HasGround)
+        {
+            TryGroundHeight(now);
+            if (_guide.HasGround && _guide.MarkerSet && MathF.Abs(_guide.GroundY - _guide.MarkedY) > ResetYDelta) SetMarker();
+        }
 
-        float d = NearestModel.Dist(_guide.X, _guide.Y, _guide.Z, _guide.HasY, p.x, p.y, p.z);
+        float d = NearestModel.Dist(_guide.X, GuideY(), _guide.Z, GuideHasHeight, p.x, p.y, p.z);
         if (d <= ArriveRadius)
         {
             if (_guide.MarkerSet) { try { _lua.ClearGuide(); } catch { } }

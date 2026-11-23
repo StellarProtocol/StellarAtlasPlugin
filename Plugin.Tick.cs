@@ -106,6 +106,7 @@ public sealed partial class Plugin
     {
         if (SharingActive) _reports.Tick(force: true);   // flush the old scene's finds now
         StopGuide(clearMarker: true);                     // a guide never survives a scene change
+        _groundCache.Clear();
         _scene = scene;
         _scanner.Reset();
         _model.Clear();
