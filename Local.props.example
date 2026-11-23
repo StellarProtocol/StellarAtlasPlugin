@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <!-- Copy this file to Local.props (gitignored) and set GameInstallDir to your game install (the folder containing
+         BepInEx\ and stellar\). -->
+    <GameInstallDir>C:\Path\To\game_mini</GameInstallDir>
+    <PluginDeployDir>$(MSBuildThisFileDirectory)plugins\atlas\</PluginDeployDir>
+    <GamePluginDir>$(GameInstallDir)\stellar\plugins\atlas\</GamePluginDir>
+
+    <!-- Atlas server client key (X-Atlas-Client-Key), baked into the DLL at build time as assembly metadata.
+         NEVER commit a real key: CI injects it from a secret (-p:AtlasClientKey=...). Without one the plugin still
+         shows the cached map data, but every server call is skipped. -->
+    <AtlasClientKey>REPLACE_WITH_CLIENT_KEY</AtlasClientKey>
+  </PropertyGroup>
+
+  <Target Name="DeployPlugin" AfterTargets="Build">
+    <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll" DestinationFolder="$(PluginDeployDir)" />
+    <Copy SourceFiles="$(OutputPath)$(AssemblyName).dll" DestinationFolder="$(GamePluginDir)" />
+  </Target>
+</Project>
