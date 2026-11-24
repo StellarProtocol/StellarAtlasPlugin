@@ -108,6 +108,7 @@ public sealed partial class Plugin
         TickAbsent();
         if (Shown || _guide.Active) RecomputeNearest();
         if (CreaturesShown && (Shown || _guide.Cre != 0)) RecomputeCreatures();
+        TickCreatureLines();
         _map.PollIcons(_services.Framework.TimeNow);
     }
 

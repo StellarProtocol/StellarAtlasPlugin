@@ -67,5 +67,22 @@
   "at.cre.offline": "アトラスのサーバーに接続できません。魔法生物のライブ状況は一時停止中です。",
   "at.cre.offlineChests": "宝箱は保存済みのデータで引き続き使えます。",
   "at.cre.loading": "最新の状況を読み込み中",
-  "at.cre.untracked": "全ラインのライブ状況は今のところSEAのみです。他のサーバーでは、アトラスのプレイヤーが見つけた生物が表示されます。"
+  "at.cre.untracked": "全ラインのライブ状況は今のところSEAのみです。他のサーバーでは、アトラスのプレイヤーが見つけた生物が表示されます。",
+  "at.cl.lines": "ライン",
+  "at.cl.aliveOnly": "出現中のみ",
+  "at.cl.all": "全{0}",
+  "at.cl.line": "ライン {0}",
+  "at.cl.notSeen": "未確認",
+  "at.cl.notOnYours": "あなたのラインにはいません",
+  "at.cl.nextSpawn": "次の出現 {0}（あと{1}）",
+  "at.cl.nextSpawnAt": "次の出現 {0}",
+  "at.cl.seenByPlayer": "プレイヤーが目撃",
+  "at.cl.ago": "{0}前",
+  "at.cl.aliveOf": "{1}ライン中{0}ラインで出現中",
+  "at.cl.alive": "{0}ラインで出現中",
+  "at.cl.youAre": "あなたはライン {0}",
+  "at.cl.updated": "{0}前に更新",
+  "at.cl.pick": "ラインをクリックすると場所を表示します",
+  "at.cl.guide": "案内する",
+  "at.cl.close": "閉じる"
 }

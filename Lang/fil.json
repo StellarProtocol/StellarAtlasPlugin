@@ -67,5 +67,22 @@
   "at.cre.offline": "Hindi maabot ang Atlas server. Naka-pause ang live na status ng mga nilalang.",
   "at.cre.offlineChests": "Gumagana pa rin ang mga chest mula sa naka-save na kopya.",
   "at.cre.loading": "Kinukuha ang pinakabagong status",
-  "at.cre.untracked": "Sa SEA lang muna ang live na status ng bawat line. Sa ibang server, makikita mo ang mga nilalang na nakita ng mga player ng Atlas."
+  "at.cre.untracked": "Sa SEA lang muna ang live na status ng bawat line. Sa ibang server, makikita mo ang mga nilalang na nakita ng mga player ng Atlas.",
+  "at.cl.lines": "Mga line",
+  "at.cl.aliveOnly": "Buhay lang",
+  "at.cl.all": "Lahat {0}",
+  "at.cl.line": "Line {0}",
+  "at.cl.notSeen": "Hindi pa nakikita",
+  "at.cl.notOnYours": "Wala sa line mo",
+  "at.cl.nextSpawn": "Susunod na spawn {0} (sa loob ng {1})",
+  "at.cl.nextSpawnAt": "Susunod na spawn {0}",
+  "at.cl.seenByPlayer": "Nakita ng player",
+  "at.cl.ago": "{0} ang nakalipas",
+  "at.cl.aliveOf": "buhay sa {0} sa {1} line",
+  "at.cl.alive": "buhay sa {0} line",
+  "at.cl.youAre": "nasa line {0} ka",
+  "at.cl.updated": "na-update {0} ang nakalipas",
+  "at.cl.pick": "I-click ang line para makita kung nasaan",
+  "at.cl.guide": "Gabayan ako roon",
+  "at.cl.close": "Isara"
 }

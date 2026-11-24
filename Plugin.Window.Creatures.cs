@@ -12,7 +12,7 @@ namespace Stellar.Atlas;
 //                [30 px round head] [bold name / tag + detail] [compass word] [distance]
 //              tags: green "On your line" / "Seen live" (in view: green row), amber "Line 7" / "Lines 2 · 6 · 9", muted
 //              "Absent" (+ "next spawn 14:00 (in 1 h 12 m)"), blue "Seen by a player" (+ "line N · 4 min ago").
-//              Click = the game's guide marker to it (any line; the line is never switched for the player). The guided
+//              Click = open the creature lines dialog (Plugin.CreatureLines.cs), which guides. The guided
 //              row = accent 30 % fill + accent outline (like NEAREST).
 //   states     2a none alive → one tile with the next fixed spawn; 2b server without live status → note under the list;
 //              2d offline with nothing saved → amber tile ("chests still work"); before the first answer → a muted tile.
@@ -31,7 +31,7 @@ public sealed partial class Plugin
     private const float CreAwayW     = CreDirW + 8f + CreDistW;   // the merged map-name cell away from Asteria Plains
     private const float CreTagH      = 17f;
     private const float CreEmptyH    = 64f;
-    private static readonly int[] CreSizes = { 12, 16, 20, 24, 30, 32, 40, 48, 60, 64 };
+    private static readonly int[] CreSizes = { 12, 16, 20, 24, 30, 32, 40, 48, 60, 64, 80 };
     // Bold 12 label (Arial-measured × 1.15 for the game font, SDL §6) + 35 px chip shell; English in every locale.
     private static readonly float[] CreChipW = { 127f, 119f, 123f, 131f, 134f };
     private static readonly ColorRgba InfoBlue = Rgb(0x9cc8ff);
@@ -147,7 +147,7 @@ public sealed partial class Plugin
                     { RichEmoji = true, Ellipsize = true }), Width: CreAwayW),
         }, Gap: 8f);
 
-        return new BubbleElement(new SelectableElement(content, OnClick: () => { if (s < _cre.Count) GuideToCreature(in R()); })
+        return new BubbleElement(new SelectableElement(content, OnClick: () => { if (s < _cre.Count) OpenCreatureLines(R().Idx); })
             { Bare = true, OnHover = over => hover.On = over })
         {
             FillColorFn = () =>
@@ -175,14 +175,14 @@ public sealed partial class Plugin
     private string CreSceneName() => _lua.SceneName(Creatures.Scene);
 
     // ── head art: the bitmap pre-drawn for the units × UI scale (exact, else the next larger), cached per scale ────
-    private readonly byte[]?[] _creHeadPng = new byte[]?[Creatures.Count * 4];
+    private readonly byte[]?[] _creHeadPng = new byte[]?[Creatures.Count * 6];
     private float _creHeadScale = -1f;
 
     private byte[]? CreHead(int idx, bool dim, int units)
     {
         float scale = UiScale();
         if (scale != _creHeadScale) { _creHeadScale = scale; Array.Clear(_creHeadPng, 0, _creHeadPng.Length); }
-        int slot = idx * 4 + (dim ? 1 : 0) + (units == CreIconUnits ? 2 : 0);
+        int slot = idx * 6 + (dim ? 1 : 0) + (units == CreIconUnits ? 2 : units == ClHeadUnits ? 4 : 0);
         if (_creHeadPng[slot] != null) return _creHeadPng[slot];
         float want = units * scale - 0.05f;
         int px = CreSizes[^1];

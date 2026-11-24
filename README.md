@@ -15,9 +15,11 @@ Boarlet, Breezy Boarlet) and Atlas lists them in their own MAGICAL CREATURES pan
 - which lines each one is alive on (yours first), its spot, HP and distance; "Absent" with the next spawn time for the
   boarlets that appear on a fixed schedule;
 - "Seen live" with its exact position and HP while it is in view;
-- a click puts the game's guide marker on it, also when it is on another line (switching line is up to you);
-- round head tiles on the game's big map and minimap: bright with a green ring on your line, faded with a line badge on
-  other lines, faded with the next spawn time while a scheduled boarlet is absent.
+- a click opens its lines: every line it is alive on (or all lines of the server), with spot, HP and when it was last
+  updated; pick a line and "Guide me there" puts the game's guide marker on it, also from another map or another line
+  (switching line is up to you);
+- round head tiles on the game's big map and minimap: a green ring on your line, a line badge on other lines, slightly
+  faded with the next spawn time while a scheduled boarlet is absent.
 
 The status of every line comes from the Atlas server (refreshed about every 30 s while you are in Asteria Plains or the
 window is open). On servers without live status you still see the creatures other Atlas players spotted: a creature in

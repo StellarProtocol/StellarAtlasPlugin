@@ -67,5 +67,22 @@
   "at.cre.offline": "Tidak bisa terhubung ke server Atlas. Status makhluk langsung dijeda.",
   "at.cre.offlineChests": "Peti tetap berfungsi dari salinan tersimpan.",
   "at.cre.loading": "Memuat status makhluk terbaru",
-  "at.cre.untracked": "Status langsung semua line baru tersedia untuk SEA. Di server lain kamu melihat makhluk yang ditemukan pemain Atlas."
+  "at.cre.untracked": "Status langsung semua line baru tersedia untuk SEA. Di server lain kamu melihat makhluk yang ditemukan pemain Atlas.",
+  "at.cl.lines": "Line",
+  "at.cl.aliveOnly": "Hanya yang ada",
+  "at.cl.all": "Semua {0}",
+  "at.cl.line": "Line {0}",
+  "at.cl.notSeen": "Belum terlihat",
+  "at.cl.notOnYours": "Tidak di line kamu",
+  "at.cl.nextSpawn": "Muncul lagi {0} ({1} lagi)",
+  "at.cl.nextSpawnAt": "Muncul lagi {0}",
+  "at.cl.seenByPlayer": "Dilihat pemain",
+  "at.cl.ago": "{0} lalu",
+  "at.cl.aliveOf": "ada di {0} dari {1} line",
+  "at.cl.alive": "ada di {0} line",
+  "at.cl.youAre": "kamu di line {0}",
+  "at.cl.updated": "diperbarui {0} lalu",
+  "at.cl.pick": "Klik line untuk melihat lokasinya",
+  "at.cl.guide": "Pandu ke sana",
+  "at.cl.close": "Tutup"
 }

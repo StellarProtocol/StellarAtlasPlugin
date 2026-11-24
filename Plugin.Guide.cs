@@ -37,6 +37,7 @@ public sealed partial class Plugin
         public float ArrivedAt, MarkedY, MarkedX, MarkedZ;   // where the marker was last placed
         public int Cre;                   // a magical creature (Creatures index + 1), 0 = a chest / point (Plugin.Creatures.cs)
         public int Scene;                 // the goal's scene (a creature: Asteria Plains, from any map); 0 = the current scene
+        public int Line;                  // a creature guided to ONE line (lines dialog); 0 = follow the panel row
         public bool Remark;               // re-place the marker on the next tick (a creature guide kept over a scene change)
     }
 

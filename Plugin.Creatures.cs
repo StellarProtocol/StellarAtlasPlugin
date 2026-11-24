@@ -68,7 +68,7 @@ public sealed partial class Plugin
             _sightings.Tick(_creServer);   // also after leaving the scene: a queued "gone" still goes out
         }
         // the guided creature was defeated in view → its row turns Absent and the guide stops (prototype 2c)
-        if (_guide.Active && _guide.Cre != 0)
+        if (_guide.Active && _guide.Cre != 0 && (_guide.Line == 0 || _guide.Line == CreLine))   // only the guided line's kill
             foreach (var c in _scanner.LiveCreatures.Values)
                 if (c.Dead && c.Idx == _guide.Cre - 1) { StopGuide(clearMarker: true); break; }
 
@@ -199,7 +199,7 @@ public sealed partial class Plugin
             near = dx * dx + dz * dz <= CreatureSightings.GoneRadius * CreatureSightings.GoneRadius;
         }
         if ((killed || near) && SharingActive && _creServer.Length > 0) _sightings.Gone(c, _line);
-        if (killed && _guide.Active && _guide.Cre == c.Idx + 1) StopGuide(clearMarker: true);
+        if (killed && _guide.Active && _guide.Cre == c.Idx + 1 && (_guide.Line == 0 || _guide.Line == CreLine)) StopGuide(clearMarker: true);
     }
 
     private void OnCreaturesLogout()
@@ -239,9 +239,14 @@ public sealed partial class Plugin
     {
         int idx = _guide.Cre - 1;
         LiveCreature? best = null;
+        // Guided to one line (lines dialog): the live creature counts only when that line is the player's own line in
+        // Asteria Plains; otherwise the server's position for that line (or the fixed spot), never another line's.
+        if (_guide.Line > 0 && _guide.Line != CreLine)
+            return LinePos(idx, _guide.Line, out x, out y, out z);
         foreach (var c in _scanner.LiveCreatures.Values)
             if (c.Idx == idx && c.HasPos && !c.Dead && (best == null || c.Dist < best.Dist)) best = c;
         if (best != null) { x = best.X; y = best.Y; z = best.Z; return true; }
+        if (_guide.Line > 0) return LinePos(idx, _guide.Line, out x, out y, out z);
         for (int i = 0; i < _cre.Count; i++)
         {
             ref var r = ref _cre.Out[i];

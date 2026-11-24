@@ -67,5 +67,22 @@
   "at.cre.offline": "Can't reach the Atlas server. Live creature status is paused.",
   "at.cre.offlineChests": "Chests still work from the saved copy.",
   "at.cre.loading": "Loading the latest creature status",
-  "at.cre.untracked": "Live status for every line is on SEA only for now. On other servers you see the creatures Atlas players spotted."
+  "at.cre.untracked": "Live status for every line is on SEA only for now. On other servers you see the creatures Atlas players spotted.",
+  "at.cl.lines": "Lines",
+  "at.cl.aliveOnly": "Alive only",
+  "at.cl.all": "All {0}",
+  "at.cl.line": "Line {0}",
+  "at.cl.notSeen": "Not seen",
+  "at.cl.notOnYours": "Not on your line",
+  "at.cl.nextSpawn": "Next spawn {0} (in {1})",
+  "at.cl.nextSpawnAt": "Next spawn {0}",
+  "at.cl.seenByPlayer": "Seen by a player",
+  "at.cl.ago": "{0} ago",
+  "at.cl.aliveOf": "alive on {0} of {1} lines",
+  "at.cl.alive": "alive on {0} lines",
+  "at.cl.youAre": "you are on line {0}",
+  "at.cl.updated": "updated {0} ago",
+  "at.cl.pick": "Click a line to see where it is",
+  "at.cl.guide": "Guide me there",
+  "at.cl.close": "Close"
 }

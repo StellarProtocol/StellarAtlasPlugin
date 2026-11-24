@@ -67,5 +67,22 @@
   "at.cre.offline": "아틀라스 서버에 연결할 수 없습니다. 생물 실시간 상태가 일시 중지되었습니다.",
   "at.cre.offlineChests": "상자는 저장된 사본으로 계속 사용할 수 있습니다.",
   "at.cre.loading": "최신 생물 상태를 불러오는 중",
-  "at.cre.untracked": "모든 라인의 실시간 상태는 현재 SEA에서만 제공됩니다. 다른 서버에서는 아틀라스 플레이어가 발견한 생물이 표시됩니다."
+  "at.cre.untracked": "모든 라인의 실시간 상태는 현재 SEA에서만 제공됩니다. 다른 서버에서는 아틀라스 플레이어가 발견한 생물이 표시됩니다.",
+  "at.cl.lines": "라인",
+  "at.cl.aliveOnly": "출현 중만",
+  "at.cl.all": "전체 {0}",
+  "at.cl.line": "라인 {0}",
+  "at.cl.notSeen": "미확인",
+  "at.cl.notOnYours": "내 라인에 없음",
+  "at.cl.nextSpawn": "다음 출현 {0} ({1} 후)",
+  "at.cl.nextSpawnAt": "다음 출현 {0}",
+  "at.cl.seenByPlayer": "플레이어 목격",
+  "at.cl.ago": "{0} 전",
+  "at.cl.aliveOf": "{1}개 라인 중 {0}개에서 출현 중",
+  "at.cl.alive": "{0}개 라인에서 출현 중",
+  "at.cl.youAre": "내 라인 {0}",
+  "at.cl.updated": "{0} 전 갱신",
+  "at.cl.pick": "라인을 클릭하면 위치가 표시됩니다",
+  "at.cl.guide": "길 안내",
+  "at.cl.close": "닫기"
 }

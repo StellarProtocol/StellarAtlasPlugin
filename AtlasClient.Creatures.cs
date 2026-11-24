@@ -45,6 +45,7 @@ internal sealed partial class AtlasClient
         public bool Ok;                  // false = the request failed (offline / HTTP error / malformed)
         public bool Tracked, Stale;
         public long UpdatedAt;           // unix ms
+        public int LineCount;            // top-level "line_count" (lines on this server); 0 = null / missing = unknown
         public CreatureInfo?[] ByIdx = new CreatureInfo?[Creatures.Count];   // Creatures index → info
     }
 
@@ -82,6 +83,7 @@ internal sealed partial class AtlasClient
             res.Tracked = Bool(root, "tracked");
             res.Stale = Bool(root, "stale");
             res.UpdatedAt = Long(root, "updated_at");
+            res.LineCount = (int)Math.Clamp(Long(root, "line_count"), 0, 999);   // optional (server PR in progress)
             if (!root.TryGetProperty("creatures", out var arr) || arr.ValueKind != JsonValueKind.Array) return;
             foreach (var c in arr.EnumerateArray())
             {
