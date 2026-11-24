@@ -128,7 +128,10 @@ public sealed partial class Plugin
                 new CellElement(new RowElement(new HudElement[] { new ImageElement(dot, iconUnits, iconUnits) },
                     Gap: 0.01f, Justify: RowJustify.Center), Width: iconUnits),
                 new SpacerElement(5f, 1f),
-                label,
+                // A content-sized Cell (Width 0 → flexibleWidth 0). The ON label is DropBold's ColumnElement, whose VLG
+                // force-expands width and so reports flexibleWidth 1 → the Row gave it ALL the slack and Justify.Center
+                // had nothing to centre (ON chips sat left-aligned, OFF centred). The Cell clamps it so both hug.
+                new CellElement(label),
                 new SpacerElement(7f, FilterChipH),
             }, Gap: 0.01f, Justify: RowJustify.Center),
             OnClick: onClick) { Bare = true, OnHover = over => hover.On = over })
