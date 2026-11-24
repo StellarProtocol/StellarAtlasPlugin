@@ -116,7 +116,6 @@ public sealed partial class Plugin : IStellarPlugin
             Root: BuildRoot(),
             OnClose: () => _window!.SetVisible(false)));
         _centerer = new WindowCenterer(_services.Framework, _window, WindowCenterer.CanvasCentre);
-        RegisterCreatureLines();   // child dialog of the creature panel (Plugin.CreatureLines.cs)
 
         // The phase stays World through the logout transition, so ShouldRender alone would leave the window up on the
         // loading screen; close it synchronously on Logout (house rule, Stellar-Design-Language.md §5).
@@ -252,7 +251,7 @@ public sealed partial class Plugin : IStellarPlugin
         StopGuide(clearMarker: true);
         _map.Restore();
         _launcherEntry.Dispose();
-        _clWindow?.Remove();
+        RemoveCreatureLines();
         _window.Remove();
         _client.Dispose();
     }

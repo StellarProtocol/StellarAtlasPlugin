@@ -13,7 +13,9 @@ namespace Stellar.Atlas;
 //
 // Window: house style, opens centred on the Atlas window and in front (WindowCenterer.OpenCentred; it fronts a window
 // that is already visible — CLAUDE.md rule 5 exception). Clicking another creature row while it is open switches the
-// creature in place (fronted, not re-centred: the player may have moved it). Closed on logout with the main window.
+// creature at the same place (one window per creature, see ClEnsureWindow; fronted, not re-centred: the player may have
+// moved it). Closed on logout with the main window. From another map the guide goes to that scene's teleport zone
+// towards Asteria Plains, or waits for arrival when there is none (GameLua __atlas_guide; Plugin.Guide.cs Remark).
 //
 // Data (this file): the shown rows are rebuilt only when their inputs change — the status object (a new fetch), the
 // creature, the mode, the player's line / scene — into a reused array (grown on demand, never per tick). The view
@@ -34,8 +36,6 @@ public sealed partial class Plugin
         public string Spot;
     }
 
-    private IWindowControl? _clWindow;
-    private WindowCenterer? _clCenterer;
     private int _clIdx;                     // Creatures index shown
     private bool _clAll;                    // "All <M>" chosen (else "Alive only")
     private int _clSel;                     // selected line, 0 = none
@@ -46,40 +46,68 @@ public sealed partial class Plugin
     private int _clBuiltIdx = -1, _clBuiltLine = -1, _clVersion;
     private bool _clBuiltAll, _clBuiltIn;
 
-    private bool ClShown => _clWindow is { IsShown: true };
+    // ONE window per creature, registered on its first open. WindowSpec.TitleProvider is evaluated only when a window is
+    // built (and on a theme / language change), never per refresh, so a single dialog kept the first creature's name in
+    // its title bar (in-game 2026-11-24: "Golden Nappo" over Silver Nappo). Each creature's window has its own fixed title
+    // (names are English everywhere); switching hides the shown one and opens the other at the same rect. No Prebuild:
+    // five prebuilt dialogs would cost five builds at start-up for windows most sessions never open.
+    private readonly IWindowControl?[] _clWindows = new IWindowControl?[Creatures.Count];
+    private readonly WindowCenterer?[] _clCenterers = new WindowCenterer?[Creatures.Count];
 
-    private void RegisterCreatureLines()
+    private IWindowControl? ClWindow => _clWindows[_clIdx];
+    private bool ClShown => ClWindow is { IsShown: true };
+
+    private IWindowControl ClEnsureWindow(int idx)
     {
-        _clWindow = _services.Windows.Register(new WindowRegistration(
+        if (_clWindows[idx] is { } w) return w;
+        w = _services.Windows.Register(new WindowRegistration(
             Spec: new WindowSpec(
-                Id:          "atlas.creature",
-                Title:       Creatures.Names[0],
+                Id:          "atlas.creature." + Creatures.Ids[idx],
+                Title:       Creatures.Names[idx],
                 DefaultRect: new WindowRect(260f, 160f, ClWidth, 0f),
                 Category:    WindowCategory.Tools,
                 Style:       WindowPanelStyle.GlassMenu)
-            { Draggable = true, Closable = true, StartVisible = false,
-              TitleProvider = () => Creatures.Names[_clIdx],   // creature names stay English (user decision)
-              Prebuild = true,                                 // hidden: 0 rows (_clN stays 0 until opened)
-              ShouldRender = InWorld },
+            { Draggable = true, Closable = true, StartVisible = false, ShouldRender = InWorld },
             Root: BuildCreatureLinesRoot(),
             OnClose: CloseCreatureLines));
-        _clCenterer = new WindowCenterer(_services.Framework, _clWindow, WindowCenterer.CentreOf(_window));
+        _clWindows[idx] = w;
+        _clCenterers[idx] = new WindowCenterer(_services.Framework, w, WindowCenterer.CentreOf(_window));
+        return w;
     }
 
-    // Panel row click: open for this creature, or switch an open dialog to it.
+    // Panel row click: open for this creature, or switch an open dialog to it (same place, in front).
     private void OpenCreatureLines(int idx)
     {
-        if (_clWindow == null) return;
+        var prev = ClWindow;
+        bool prevShown = prev is { IsShown: true };
         if (idx != _clIdx) { _clIdx = idx; _clSel = 0; _clBuiltFor = null; }
         RebuildClRows();
-        if (ClShown) { _clWindow.BringToFront(); return; }
-        _clCenterer!.OpenCentred();
+        var w = ClEnsureWindow(idx);
+        if (prevShown && !ReferenceEquals(prev, w))
+        {
+            var r = prev!.Rect;
+            prev.SetVisible(false);
+            w.SetRect(new WindowRect(r.X, r.Y, ClWidth, r.Height));
+            w.SetVisible(true);
+            w.BringToFront();
+            return;
+        }
+        if (w.IsShown) { w.BringToFront(); return; }
+        _clCenterers[idx]!.OpenCentred();
     }
 
     private void CloseCreatureLines()
     {
-        _clCenterer?.Stop();
-        _clWindow?.SetVisible(false);
+        for (int i = 0; i < Creatures.Count; i++)
+        {
+            _clCenterers[i]?.Stop();
+            if (_clWindows[i] is { IsShown: true } w) w.SetVisible(false);
+        }
+    }
+
+    private void RemoveCreatureLines()
+    {
+        for (int i = 0; i < Creatures.Count; i++) { _clCenterers[i]?.Stop(); _clWindows[i]?.Remove(); _clWindows[i] = null; }
     }
 
     private void SetClMode(bool all)
