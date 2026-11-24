@@ -28,7 +28,7 @@ import sys
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
 IDS = (10900, 10901, 10902, 10903, 10904)
-UI_SIZES = (12, 16, 20, 24, 30, 32, 40, 48, 60, 64)
+UI_SIZES = (12, 16, 20, 24, 30, 32, 40, 48, 60, 64, 80)
 MAP_SIZES = (32, 42, 64, 96)
 SS = 16
 DISC_BG = (0x1a, 0x14, 0x1e, 255)
