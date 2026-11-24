@@ -24,18 +24,22 @@ internal sealed partial class AtlasClient
     private const string HeaderTimestamp = "X-Atlas-Timestamp";
     private const string HeaderNonce     = "X-Atlas-Nonce";
     private const string HeaderSignature = "X-Atlas-Signature";
+    private const string ReportsPath     = "/v1/reports";
+    // Creature sightings are signed EXACTLY like reports (same headers, path in the signature) and share this worker, the
+    // install credentials and the one-at-a-time gate (a concurrent first sighting + first report must not register twice).
+    private const string SightingsPath   = "/v1/creature-sightings";
 
     // `installId`/`installSecret` are the caller's current credentials (empty = register first, in the same job).
     public void PostReport(byte[] body, string installId, string installSecret, Action<ReportOutcome> onMain)
     {
         _ = Task.Run(async () =>
         {
-            var outcome = await PostReportWorker(body, installId, installSecret).ConfigureAwait(false);
+            var outcome = await PostSignedWorker(ReportsPath, body, installId, installSecret).ConfigureAwait(false);
             if (!_disposed) _services.Framework.Post(() => onMain(outcome));
         });
     }
 
-    private async Task<ReportOutcome> PostReportWorker(byte[] body, string installId, string secret)
+    private async Task<ReportOutcome> PostSignedWorker(string path, byte[] body, string installId, string secret)
     {
         var outcome = new ReportOutcome { Status = ReportStatus.Retry };
         if (!HasKey) { outcome.Status = ReportStatus.NoKey; return outcome; }
@@ -50,7 +54,7 @@ internal sealed partial class AtlasClient
                 outcome.NewInstallId = installId; outcome.NewInstallSecret = secret;
             }
 
-            var uri = new Uri(BaseUrl + "/v1/reports");
+            var uri = new Uri(BaseUrl + path);
             string ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
             string nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
             string sig = Sign(secret, "POST", uri.AbsolutePath, ts, nonce, body);
@@ -64,14 +68,14 @@ internal sealed partial class AtlasClient
             req.Headers.TryAddWithoutValidation(HeaderSignature, sig);
             using var resp = await _http.SendAsync(req).ConfigureAwait(false);
             outcome.Status = Classify(resp.StatusCode);
-            if (outcome.Status == ReportStatus.Ok) CountResults(await resp.Content.ReadAsByteArrayAsync().ConfigureAwait(false), outcome);
+            if (outcome.Status == ReportStatus.Ok && path == ReportsPath) CountResults(await resp.Content.ReadAsByteArrayAsync().ConfigureAwait(false), outcome);
             if (outcome.Status != ReportStatus.Ok)
-                _services.Log.Warning($"[Atlas] report → HTTP {(int)resp.StatusCode} ({outcome.Status})");
+                _services.Log.Warning($"[Atlas] {path} → HTTP {(int)resp.StatusCode} ({outcome.Status})");
         }
         catch (Exception ex)
         {
             outcome.Status = ReportStatus.Retry;
-            _services.Log.Warning($"[Atlas] report failed: {ex.GetType().Name}: {ex.Message}");
+            _services.Log.Warning($"[Atlas] {path} failed: {ex.GetType().Name}: {ex.Message}");
         }
         finally { _gate.Release(); }
         return outcome;

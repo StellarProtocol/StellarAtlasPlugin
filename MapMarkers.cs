@@ -358,6 +358,7 @@ internal sealed partial class MapMarkers
             sig = (sig ^ (ulong)en.N) * 1099511628211UL;
             sig = (sig ^ (ulong)en.Chip) * 1099511628211UL;
         }
+        AppendCreatures(scene, _job, ref sig, ref sigAll);   // Asteria Plains: the magical creature flags (MapMarkers.CreatureTiles.cs)
         _jobSig = sig ^ (ulong)scene;
         _jobSigAll = sigAll ^ (ulong)scene;
     }

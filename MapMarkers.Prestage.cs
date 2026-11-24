@@ -93,6 +93,7 @@ internal sealed partial class MapMarkers
                 foreach (int s in drop)
                 {
                     if (s == _curScene) continue;
+                    if (s == Creatures.Scene && CreatureMask != 0) { Enqueue(s); continue; }   // re-staged with only its creatures
                     _staged.Remove(s);
                     _emptyScenes[s] = mask;
                     Call("__atlas_mdrop(" + s.ToString(CultureInfo.InvariantCulture) + ")");
@@ -153,12 +154,13 @@ internal sealed partial class MapMarkers
 
         // load the next queued scene (worker thread) — not while every chip is off (nothing could be shown; the queue
         // waits for the first chip)
-        if (_loading == 0 && _bScene == 0 && _queue.Count > 0 && anyShown)
+        if (_loading == 0 && _bScene == 0 && _queue.Count > 0 && (anyShown || CreatureMask != 0))
         {
             int scene = _queue[0];
             _queue.RemoveAt(0);
             _queued.Remove(scene);
             if (scene == _curScene) return false;
+            if (!anyShown && scene != Creatures.Scene) return false;   // creature chips only: Asteria Plains is the one scene with flags
             _loading = scene;
             long ver = _index.TryGetValue(scene, out long v) ? v : -1;
             _client.LoadScene(scene, ver, fetchWithoutCache: scene == _priorityScene, res =>
@@ -269,6 +271,7 @@ internal sealed partial class MapMarkers
             _bSig = (_bSig ^ (ulong)p.Id) * 1099511628211UL;
             _bSig = (_bSig ^ (ulong)p.Chip) * 1099511628211UL;
         }
+        AppendCreatures(_bScene, _bJob, ref _bSig, ref _bSigAll);   // scene 7 stages its creature flags too
         _bPts = Array.Empty<AtlasPoint>();   // don't keep the scene's points alive
         return true;
     }
@@ -315,7 +318,8 @@ internal sealed partial class MapMarkers
         if (s != _viewedScene && _viewedScene != 0 && _viewedScene != _curScene) DropIcons(_viewedScene);
         _viewedScene = s;
         if (_staged.TryGetValue(s, out var st)) { CommitIcons(s, st.Entries, extra: true); return; }   // already drawn by the game
-        if (_emptyScenes.ContainsKey(s) || (_curMask & AtlasGroups.ShownBits) == 0) return;
+        bool creaturesHere = s == Creatures.Scene && CreatureMask != 0;
+        if (_emptyScenes.ContainsKey(s) || ((_curMask & AtlasGroups.ShownBits) == 0 && !creaturesHere)) return;
         _priorityScene = s;   // never visited → fetch now, stage, dispatch once
         Enqueue(s, front: true);
     }

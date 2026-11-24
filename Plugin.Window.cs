@@ -8,6 +8,7 @@ namespace Stellar.Atlas;
 //   ToolHeader   [accent map tile] Atlas / ● "<map> · N chests on this map · M nearby" (green dot = synced; amber
 //                "Offline · showing the copy from 2 h ago" when the server can't be reached)
 //   SHOW         filter chips (Plugin.Window.Show.cs)
+//   MAGICAL CREATURES  only while a creature chip is on (Plugin.Window.Creatures.cs)
 //   NEAREST      8 reserved rows (Plugin.Window.Nearest.cs)
 //   footer       Stop guiding (Neutral) · muted "Shared map" hint
 // First open (2a): the same header + an informational notice tile ("Atlas is a shared map") + one full-width Primary
@@ -32,6 +33,7 @@ public sealed partial class Plugin
     private HudElement BuildMain() => new ColumnElement(new HudElement[]
     {
         BuildShowPanel(),
+        new ConditionalElement(() => CreaturesShown, BuildCreaturePanel()),   // Plugin.Window.Creatures.cs
         BuildNearestPanel(),
         BuildFooter(),
     }, Gap: 8f);
@@ -77,6 +79,7 @@ public sealed partial class Plugin
     private int _sceneNameFor, _stChests = -1, _stNearby = -1, _stAge = -1;
     private HeadKind _stKind;
     private bool _stNone;
+    private int _stLine = -1;   // the line shown after the map name ("Asteria Plains · Line 4 · …"), 0 = unknown → omitted
 
     private string HeadText()
     {
@@ -84,16 +87,18 @@ public sealed partial class Plugin
         if (kind == HeadKind.Idle) return "";
         if (_sceneNameFor != _scene) { _sceneName = _lua.SceneName(_scene); _sceneNameFor = _sceneName.Length > 0 ? _scene : 0; _statusKey = null; }
         int chests = _model.ChestsOnMap, nearby = _model.Nearby, age = kind == HeadKind.Offline ? AgeBucket() : -1;
-        bool none = NothingShown;
-        if (_statusKey != null && kind == _stKind && chests == _stChests && nearby == _stNearby && age == _stAge && none == _stNone)
+        bool none = NothingShown && !CreaturesShown;   // "nothing shown yet" only when no chip at all is on (creatures count)
+        if (_statusKey != null && kind == _stKind && chests == _stChests && nearby == _stNearby && age == _stAge && none == _stNone && _line == _stLine)
             return _statusText;
-        _stKind = kind; _stChests = chests; _stNearby = nearby; _stAge = age; _stNone = none; _statusKey = "ok";
+        _stKind = kind; _stChests = chests; _stNearby = nearby; _stAge = age; _stNone = none; _stLine = _line; _statusKey = "ok";
+        // Line N rides inside the map-name argument: one text, so no layout jump, and the existing keys stay unchanged.
+        string place = _line > 0 && _scene == ActualScene && _sceneName.Length > 0 ? _sceneName + " · " + _loc.TFormat("at.status.line", _line) : _sceneName;
         _statusText = kind switch
         {
             HeadKind.Offline     => _loc.TFormat("at.status.offline", AgeText(age)),
             HeadKind.OfflineNone => _loc.T("at.status.offlineNone"),
-            _ when none          => _loc.TFormat("at.status.syncedNone", _sceneName, chests),
-            _                    => _loc.TFormat("at.status.synced", _sceneName, chests, nearby),
+            _ when none          => _loc.TFormat("at.status.syncedNone", place, chests),
+            _                    => _loc.TFormat("at.status.synced", place, chests, nearby),
         };
         return _statusText;
     }

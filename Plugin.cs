@@ -24,6 +24,9 @@ namespace Stellar.Atlas;
 //   AtlasClient*.cs           HTTP (points + signed reports), disk cache — worker thread only
 //   NearestModel.cs           server + live merge, the 8 nearest shown points
 //   MapMarkers*.cs            the shown points as markers on the game's own big map + minimap (option C)
+//   Plugin.Creatures.cs       magical creatures (prototype atlas-creatures.tpl.html): Creatures.cs / CreatureModel.cs /
+//                             CreatureSightings.cs / SessionLua.cs / EntityScanner.Creatures.cs / AtlasClient.Creatures.cs,
+//                             panel Plugin.Window.Creatures*.cs, map tiles MapMarkers.CreatureTiles.cs
 public sealed partial class Plugin : IStellarPlugin
 {
     public string Name => "Atlas";
@@ -89,6 +92,10 @@ public sealed partial class Plugin : IStellarPlugin
         _map     = new MapMarkers(services, _client);
         _ground  = new GroundProbe(services);
         _reports = new ReportQueue(_client, () => _services.Framework.TimeNow, GetInstall, SetInstall, m => _services.Log.Info(m));
+        _session   = new SessionLua(services);
+        _sightings = new CreatureSightings(_client, () => _services.Framework.TimeNow, GetInstall, SetInstall, m => _services.Log.Info(m));
+        _map.CreatureSource = _cre;
+        _scanner.CreatureLeft = OnCreatureLeft;
         _scanner.Appeared = OnLiveAppeared;
         _scanner.Opened   = OnLiveOpened;
         _loc.LanguageChanged += OnLanguageChanged;
@@ -142,15 +149,17 @@ public sealed partial class Plugin : IStellarPlugin
     private void OnLogout()
     {
         _centerer.Stop();
+        CloseCreatureLines();
         _window.SetVisible(false);
         StopGuide(clearMarker: true);
         _scanner.Reset();
         _model.Clear();
         _lua.OnLogout();
+        OnCreaturesLogout();
         _map.OnLogout();
         _scene = 0;
         _charId = 0;
-        _mask = AtlasGroups.DefaultMask;
+        SetMask(AtlasGroups.DefaultMask, "logout");
     }
 
     private void OnLanguageChanged()
@@ -190,21 +199,45 @@ public sealed partial class Plugin : IStellarPlugin
     // Character switch (first world tick after a login): per-character chips + opened chests.
     private void OnCharacter(long charId)
     {
+        long prev = _charId;
         _charId = charId;
         // A mask saved before the SHOW redesign keeps the chips that still exist (MigrateMask); a new character gets the
         // new-character default (every chip off).
-        _mask = charId != 0 ? AtlasGroups.MigrateMask(_cfg.Get<int>(MaskKey(charId), AtlasGroups.DefaultMask)) : AtlasGroups.DefaultMask;
+        // In-game 2026-11-24 (Atlas creatures test): with chip clicks ~0.7 s apart the in-memory mask fell back to an OLDER
+        // value (chest bits lost, creature bits kept) — only this method can do that, by re-reading the config. The
+        // framework config tree can be replaced by an external-change reload of the file (async writer + file watcher,
+        // PluginConfigService.OnExternalFileChanged), so a re-read during a burst of saves can return a stale value. So
+        // the config is read ONCE per character per session; any later OnCharacter for the same character (char id
+        // flicker, logout + login) takes the session copy, which every toggle keeps current.
+        if (charId == 0) SetMask(AtlasGroups.DefaultMask, "char 0");
+        else if (_maskByChar.TryGetValue(charId, out int kept)) SetMask(kept, $"char {charId} (session copy; was {prev})");
+        else
+        {
+            int raw = _cfg.Get<int>(MaskKey(charId), AtlasGroups.DefaultMask);
+            SetMask(AtlasGroups.MigrateMask(raw), $"char {charId} (config 0x{raw:X}, migrate; was {prev})");
+            _maskByChar[charId] = _mask;
+        }
         _opened.SetCharacter(charId);
         RecomputeNearest();
+    }
+
+    private readonly Dictionary<long, int> _maskByChar = new();   // session copy per character (see OnCharacter)
+
+    // The ONLY writer of _mask (toggle / char / logout), logged on every change so a lost chip shows its cause in-game.
+    private void SetMask(int value, string reason)
+    {
+        if (value != _mask) _services.Log.Info($"[Atlas] mask 0x{_mask:X} → 0x{value:X} ({reason})");
+        _mask = value;
     }
 
     private bool ChipOn(Chip c) => (_mask & (1 << (int)c)) != 0;
 
     private void ToggleMaskBit(int bit)
     {
-        _mask ^= bit;
-        if (_charId != 0) { _cfg.Set<int>(MaskKey(_charId), _mask); _cfg.Save(); }
+        SetMask(_mask ^ bit, $"toggle 0x{bit:X}");
+        if (_charId != 0) { _maskByChar[_charId] = _mask; _cfg.Set<int>(MaskKey(_charId), _mask); _cfg.Save(); }
         _map.NoteFilterChanged(_services.Framework.TimeNow);   // coalesce a burst of chip clicks into one map rebuild
+        if ((bit & Creatures.AllBits) != 0) OnCreatureChipToggled();
         RecomputeNearest();
     }
 
@@ -214,9 +247,11 @@ public sealed partial class Plugin : IStellarPlugin
         try { _loc.LanguageChanged -= OnLanguageChanged; } catch { }
         StopTicks();
         _centerer.Stop();
+        CloseCreatureLines();
         StopGuide(clearMarker: true);
         _map.Restore();
         _launcherEntry.Dispose();
+        RemoveCreatureLines();
         _window.Remove();
         _client.Dispose();
     }

@@ -96,7 +96,8 @@ public sealed partial class Plugin
         if (_scanner.HasPlayerPos)
         {
             var p = _scanner.PlayerPos;
-            if (CharReady) _map.Tick(_scene, _fetchedOnce, p.y, _mask, _model, _scanner.Live, _opened, _services.Framework.TimeNow);
+            _map.CreatureMask = CreatureMask;
+            if (CharReady) _map.Tick(_scene, _fetchedOnce, p.y, _mask & ~Creatures.AllBits, _model, _scanner.Live, _opened, _services.Framework.TimeNow);
         }
     }
 
@@ -107,6 +108,8 @@ public sealed partial class Plugin
         TickSharingEdge();
         TickAbsent();
         if (Shown || _guide.Active) RecomputeNearest();
+        if (CreaturesShown && (Shown || _guide.Cre != 0)) RecomputeCreatures();
+        TickCreatureLines();
         _map.PollIcons(_services.Framework.TimeNow);
     }
 
@@ -123,19 +126,28 @@ public sealed partial class Plugin
         }
         if (_scene > 0 && !_fetchInFlight && _lastFetchAt >= 0f && now - _lastFetchAt >= RefreshSeconds) Fetch();
         TickFlash(now);
+        TickCreatures(now);
     }
 
     private void OnSceneChange(int scene)
     {
         if (SharingActive) _reports.Tick(force: true);   // flush the old scene's finds now
-        StopGuide(clearMarker: true);                     // a guide never survives a scene change
+        // a point guide never survives a scene change; a creature guide (its goal names Asteria Plains) is kept and its
+        // marker re-placed once the new scene is up, so guiding from another map still works after the loading screen
+        if (_guide.Cre == 0) StopGuide(clearMarker: true); else _guide.Remark = _guide.MarkerSet || _guide.Pending;   // pending: set on arriving in its scene
         _groundCache.Clear();
         NoteWorldUnstable();
+        int prevActual = _actualScene;
         _scene = scene;
+        // _scene may be the scene the big map browses, not where the player is: the creature "you are here" logic uses the
+        // actual scene, and the line (per scene) is dropped only when the ACTUAL scene changed (re-read within 1 s).
+        RefreshActualScene();
+        if (_actualScene != prevActual) _line = 0;
         _scanner.Reset();
         _model.Clear();
         _map.OnScene(scene, _services.Framework.TimeNow);
         _opened.SetScene(scene);
+        _sightings.ResetSeen();
         _fetchState = AtlasClient.FetchState.NoData;
         _fetchedOnce = false;
         _fetchedUnix = 0;

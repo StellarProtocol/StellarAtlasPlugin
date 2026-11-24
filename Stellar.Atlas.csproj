@@ -11,7 +11,7 @@
     <RootNamespace>Stellar.Atlas</RootNamespace>
     <AssemblyName>Stellar.Atlas</AssemblyName>
     <Version>1.0.0</Version>
-    <Description>Chest and resource finder. Atlas is a shared map: while it runs, the chests and resources you find (what and where) are shared with the Atlas server. No names, UIDs or chat are sent.</Description>
+    <Description>Chest and resource finder. Atlas is a shared map: while it runs, the chests, resources and magical creatures you find (what and where) are shared with the Atlas server. No names, UIDs or chat are sent.</Description>
     <Deterministic>true</Deterministic>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
@@ -36,6 +36,9 @@
     <EmbeddedResource Include="Resources/dots/*.png" LogicalName="Stellar.Atlas.%(Filename)%(Extension)" />
     <!-- Big map / minimap marker tiles per chip and size (tools/make-map-icons.py). -->
     <EmbeddedResource Include="Resources/map/map-*.png" LogicalName="Stellar.Atlas.%(Filename)%(Extension)" />
+    <!-- Magical creatures: round head art per size for the window (cre-*) and the map tiles + badge glyphs (mapc-*),
+         tools/icons/gen-creature-icons.py. -->
+    <EmbeddedResource Include="Resources/creatures/*.png" LogicalName="Stellar.Atlas.%(Filename)%(Extension)" />
     <!-- i18n catalogs, auto-discovered by the framework via LogicalName "Stellar.<AssemblyName>.Lang.<locale>.json". -->
     <EmbeddedResource Include="Lang/en.json"  LogicalName="Stellar.Atlas.Lang.en.json" />
     <EmbeddedResource Include="Lang/ja.json"  LogicalName="Stellar.Atlas.Lang.ja.json" />

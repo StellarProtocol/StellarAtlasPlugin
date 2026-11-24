@@ -103,7 +103,7 @@ internal sealed partial class MapMarkers
     {
         int n = 0;
         foreach (var kv in _committedSets) n += kv.Value.Count;
-        _paths = new string[n]; _chips = new Chip[n]; _ns = new long[n]; _suppressed = new bool[n]; _bigOnly = new bool[n];
+        _paths = new string[n]; _chips = new Chip[n]; _ns = new long[n]; _suppressed = new bool[n]; _bigOnly = new bool[n]; _creN = new long[n];
         _nIndex.Clear();
         int i = 0;
         if (_committedSets.TryGetValue(_curScene, out var cur)) i = Fill(cur, _curScene, false, i);
@@ -119,6 +119,7 @@ internal sealed partial class MapMarkers
             long id = FullId(scene, e.N);
             _paths[i] = "positionFlagName" + id.ToString(CultureInfo.InvariantCulture) + "/node_parent/img_icon";
             _chips[i] = e.Chip;
+            _creN[i] = CreatureModel.IsCreatureN(e.N) ? e.N : 0;
             _ns[i] = id;
             _bigOnly[i] = bigOnly;
             _nIndex[id] = i;
@@ -152,6 +153,7 @@ internal sealed partial class MapMarkers
         _ns = Array.Empty<long>();
         _suppressed = Array.Empty<bool>();
         _bigOnly = Array.Empty<bool>();
+        _creN = Array.Empty<long>();
         _committedSets.Clear();
         _nIndex.Clear();
         _big.Reset(0);
@@ -231,7 +233,16 @@ internal sealed partial class MapMarkers
             var chip = _chips[i];
             bool hide = _suppressed[i];
             Sprite? sprite = null;
-            if (!hide)
+            long cn = _creN[i];
+            if (cn != 0)
+            {
+                // a creature flag: its tile follows the creature model's live state (MapMarkers.CreatureTiles.cs); a flag
+                // no longer in the model's candidates hides in place until the next published set drops it
+                var tile = CreatureSource?.TileFor(cn);
+                if (tile == null || tile.Kind == CreatureModel.TileKind.Hidden) hide = true;
+                else if (!_creFailed && !_tintFallback && (sprite = CreatureSprite(tile)) == null) continue;   // composed next pass
+            }
+            else if (!hide)
             {
                 sprite = Tile(chip);
                 // null + not failed + not tinting = the tile is still to be decoded (one per pass) → this Id next pass
@@ -336,6 +347,7 @@ internal sealed partial class MapMarkers
 
     private void DestroySprites()
     {
+        DestroyCreatureSprites();
         for (int i = 0; i < _sprites.Length; i++)
         {
             try { if (_sprites[i] != null) UnityEngine.Object.Destroy(_sprites[i]); } catch { }
