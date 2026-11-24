@@ -28,6 +28,7 @@ public sealed partial class Plugin
     private const int   CreChipUnits = 16;
     private const float CreDirW      = 24f;
     private const float CreDistW     = 48f;
+    private const float CreAwayW     = CreDirW + 8f + CreDistW;   // the merged map-name cell away from Asteria Plains
     private const float CreTagH      = 17f;
     private const float CreEmptyH    = 64f;
     private static readonly int[] CreSizes = { 12, 16, 20, 24, 30, 32, 40, 48, 60, 64 };
@@ -133,10 +134,17 @@ public sealed partial class Plugin
                         { RichEmoji = true, Ellipsize = true }, Weight: 1f),
                 }, Gap: 0.01f),
             }, Gap: 1f), Weight: 1f),
-            new CellElement(new TextElement(() => R().HasPos && !Live() ? _loc.T(DirKey(R().Dir)) : "", Color: () => MutedColor(),
-                Width: CreDirW, Align: TextAlign.Center, NoWrap: true, FontSize: 12) { RichEmoji = true }, Width: CreDirW),
-            new CellElement(DropBold(new TextElement(() => R().HasPos && R().Dist < 1e6f ? DistText(R().Dist) : "",
-                Color: () => TextColor(), Width: CreDistW, Align: TextAlign.Right, NoWrap: true, FontSize: 12) { Bold = true }), Width: CreDistW),
+            // [compass][distance] in Asteria Plains; on any other map one merged muted cell with the map name (the game's own
+            // scene name, same lookup as the header) — another map's coordinates give no meaningful distance.
+            new CellElement(new ConditionalElement(() => InCreatureScene, new RowElement(new HudElement[]
+            {
+                new CellElement(new TextElement(() => R().HasPos && !Live() && R().Dist < 1e6f ? _loc.T(DirKey(R().Dir)) : "",
+                    Color: () => MutedColor(), Width: CreDirW, Align: TextAlign.Center, NoWrap: true, FontSize: 12) { RichEmoji = true }, Width: CreDirW),
+                new CellElement(DropBold(new TextElement(() => R().HasPos && R().Dist < 1e6f ? DistText(R().Dist) : "",
+                    Color: () => TextColor(), Width: CreDistW, Align: TextAlign.Right, NoWrap: true, FontSize: 12) { Bold = true }), Width: CreDistW),
+            }, Gap: 8f),
+                new TextElement(CreSceneName, Color: () => MutedColor(), Width: CreAwayW, Align: TextAlign.Right, NoWrap: true, FontSize: 11)
+                    { RichEmoji = true, Ellipsize = true }), Width: CreAwayW),
         }, Gap: 8f);
 
         return new BubbleElement(new SelectableElement(content, OnClick: () => { if (s < _cre.Count) GuideToCreature(in R()); })
@@ -162,6 +170,9 @@ public sealed partial class Plugin
     };
 
     private ColorRgba TagFill(int s) => Over(TagColor(s) with { A = 0.20f }, TileColor());
+
+    // "Asteria Plains" in the client's language (GameLua caches it per scene; cleared on a language change).
+    private string CreSceneName() => _lua.SceneName(Creatures.Scene);
 
     // ── head art: the bitmap pre-drawn for the units × UI scale (exact, else the next larger), cached per scale ────
     private readonly byte[]?[] _creHeadPng = new byte[]?[Creatures.Count * 4];

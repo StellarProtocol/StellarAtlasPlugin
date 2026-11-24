@@ -35,6 +35,9 @@ public sealed partial class Plugin
     private float _creFetchAt = -1000f;
 
     private int CreatureMask => _mask & Creatures.AllBits;
+    // Lines are per scene: "your line" only means something in Asteria Plains. Elsewhere every alive line is just "Line N".
+    private bool InCreatureScene => _scene == Creatures.Scene;
+    private int CreLine => InCreatureScene ? _line : 0;
     private bool CreaturesShown => CreatureMask != 0;
 
     // Unix ms for "updated X s ago" / "in 1 h 12 m": the framework's interpolated server clock (never ZServerTime,
@@ -71,10 +74,10 @@ public sealed partial class Plugin
 
         // map flags: tile states every second, the flag SET only on material change (≤ 1 / min unless a chip toggled)
         if (_creHasData || _scanner.LiveCreatures.Count > 0 || _cre.Published.Count > 0)
-            if (_cre.UpdateFlags(_line, CreatureMask, _scanner.LiveCreatures, now))
+            if (_cre.UpdateFlags(CreLine, CreatureMask, _scanner.LiveCreatures, now))
             {
                 _map.CreaturesChanged();
-                _services.Log.Info($"[Atlas] creature map flags: {_cre.Published.Count} published (line {_line})");
+                _services.Log.Info($"[Atlas] creature map flags: {_cre.Published.Count} published (line {CreLine})");
             }
     }
 
@@ -120,23 +123,26 @@ public sealed partial class Plugin
     // Row recompute (ScanTick, 2 Hz) while the window is shown or a creature is guided.
     private void RecomputeCreatures()
     {
-        if (!CharReady || !_scanner.HasPlayerPos) return;
+        if (!CharReady) return;
+        // Away from Asteria Plains the player's coordinates belong to another map: no distance / compass (rows sort by
+        // line status only) and no "your line".
+        bool dist = InCreatureScene && _scanner.HasPlayerPos;
         var p = _scanner.PlayerPos;
-        _cre.Recompute(true, p.x, p.y, p.z, _line, CreatureMask, _scanner.LiveCreatures);
+        _cre.Recompute(dist, p.x, p.y, p.z, CreLine, CreatureMask, _scanner.LiveCreatures);
     }
 
     // ── server id (once per world entry) ──────────────────────────────────────────────────────────────────────────
-    // The SEA / JP values of server_data are unknown until logged in-game: fill these after reading the "[Atlas] server:"
-    // line (keys: NowSelectData.zoneId, or the description). Until then the config override `CreatureServerId`
-    // (settings section, e.g. "sea") wins, else a slug of the description is sent (the server answers tracked:false or
-    // 404 for a name it doesn't know; sightings then build that server's player-only list).
+    // server_data values per region, from the "[Atlas] server:" log (SEA = zoneId 8001; JP still unknown):
+    // keyed by NowSelectData.zoneId (or the description). The config override `CreatureServerId` (settings section,
+    // e.g. "sea") always wins; an unknown region sends a slug of the description (the server answers tracked:false
+    // or 404 for a name it doesn't know; sightings then build that server's player-only list).
     private static readonly Dictionary<int, string> ServerByZone = new()
     {
-        // TODO(in-game): { <zoneId>, "sea" }, { <zoneId>, "jp" },
+        { 8001, "sea" },   // in-game 2026-11-24: description 'haoplay-sea…' zoneId=8001 id=1.0 NowSelectServerId=1
+        // TODO(in-game): JP zoneId → "jp"
     };
     private static readonly Dictionary<string, string> ServerByDescription = new(StringComparer.OrdinalIgnoreCase)
     {
-        // TODO(in-game): { "<description>", "sea" },
     };
 
     private void ResolveServer(float now)
@@ -217,7 +223,11 @@ public sealed partial class Plugin
     private void GuideToCreature(in CreatureModel.Row r)
     {
         if (!r.HasPos) return;
-        _guide = new GuideState { Active = true, Cre = r.Idx + 1, Uuid = r.Uuid, X = r.X, Y = r.Y, Z = r.Z, HasY = r.Y != 0f };
+        // Goal scene = Asteria Plains even from another map (the PositionShare goal takes the scene id). Away from it there is
+        // no physics for the ground raycast → the server / fixed-spot y is used as is.
+        bool away = _scene != Creatures.Scene;
+        _guide = new GuideState { Active = true, Cre = r.Idx + 1, Scene = Creatures.Scene, Uuid = r.Uuid, X = r.X, Y = r.Y, Z = r.Z,
+                                  HasY = away || r.Y != 0f };
         if (!_guide.HasY) TryGroundHeight(_services.Framework.TimeNow);
         SetMarker();
     }

@@ -36,6 +36,8 @@ public sealed partial class Plugin
         public float GroundY, NextGroundAt;
         public float ArrivedAt, MarkedY, MarkedX, MarkedZ;   // where the marker was last placed
         public int Cre;                   // a magical creature (Creatures index + 1), 0 = a chest / point (Plugin.Creatures.cs)
+        public int Scene;                 // the goal's scene (a creature: Asteria Plains, from any map); 0 = the current scene
+        public bool Remark;               // re-place the marker on the next tick (a creature guide kept over a scene change)
     }
 
     private struct FlashState
@@ -77,7 +79,8 @@ public sealed partial class Plugin
 
     private void TryGroundHeight(float now)
     {
-        if (_guide.HasY || _guide.HasGround || now < _guide.NextGroundAt) return;
+        // physics only exists for the loaded scene: never raycast for a goal on another map
+        if (_guide.HasY || _guide.HasGround || now < _guide.NextGroundAt || !GuideInScene) return;
         _guide.NextGroundAt = now + GroundRetrySecs;
         long key = GuideKey();
         if (key != 0 && _groundCache.TryGetValue(key, out float gy)) { _guide.GroundY = gy; _guide.HasGround = true; return; }
@@ -86,10 +89,14 @@ public sealed partial class Plugin
         if (key != 0) _groundCache[key] = gy;
     }
 
+    // PositionShare goals carry their own scene id: a creature row guides to Asteria Plains from any map.
+    private int GuideScene => _guide.Scene != 0 ? _guide.Scene : _scene;
+    private bool GuideInScene => GuideScene == _scene;
+
     private void SetMarker()
     {
         float y = GuideY();
-        _guide.MarkerSet = _lua.SetGuide(_scene, _guide.X, y, _guide.Z);
+        _guide.MarkerSet = _lua.SetGuide(GuideScene, _guide.X, y, _guide.Z);
         _guide.MarkedY = y; _guide.MarkedX = _guide.X; _guide.MarkedZ = _guide.Z;
         if (!_guide.MarkerSet) _services.Log.Warning("[Atlas] guide marker could not be set (game Lua not ready?)");
     }
@@ -124,6 +131,7 @@ public sealed partial class Plugin
             if (now - _guide.ArrivedAt > ArrivedKeepSecs) _guide = default;
             return;
         }
+        if (_guide.Remark) { _guide.Remark = false; SetMarker(); }
 
         bool found = false;
         float tx = 0f, ty = 0f, tz = 0f;
@@ -143,7 +151,8 @@ public sealed partial class Plugin
             if (_guide.HasGround && _guide.MarkerSet && MathF.Abs(_guide.GroundY - _guide.MarkedY) > ResetYDelta) SetMarker();
         }
 
-        float d = NearestModel.Dist(_guide.X, GuideY(), _guide.Z, GuideHasHeight, p.x, p.y, p.z);
+        // arrival only counts on the goal's own map (another scene's coordinates mean nothing here)
+        float d = GuideInScene ? NearestModel.Dist(_guide.X, GuideY(), _guide.Z, GuideHasHeight, p.x, p.y, p.z) : float.MaxValue;
         if (d <= ArriveRadius)
         {
             if (_guide.MarkerSet) { try { _lua.ClearGuide(); } catch { } }

@@ -93,14 +93,14 @@ public sealed partial class Plugin
         long updated = _cre.Status?.UpdatedAt ?? 0;
         if (!_creHasData || updated <= 0) { updated = 0; }
         int age = updated > 0 ? AgeSecondsBucket((NowMs() - updated) / 1000) : -1;
-        long sig = 17L * 31 + _line; sig = sig * 31 + age; sig = sig * 31 + (_creOffline ? 1 : 0);
+        long sig = 17L * 31 + CreLine; sig = sig * 31 + age; sig = sig * 31 + (_creOffline ? 1 : 0);
         sig = sig * 31 + RuntimeHelpers.GetHashCode(_loc.Language);
         if (sig == _capSig) return _capText;
         _capSig = sig;
         string ago = age < 0 ? "" : AgeBucketText(age);
         if (_creOffline && ago.Length > 0) _capText = _loc.TFormat("at.cre.capOffline", ago);
-        else if (ago.Length == 0) _capText = _line > 0 ? _loc.TFormat("at.cre.capLineOnly", _line) : "";
-        else _capText = _line > 0 ? _loc.TFormat("at.cre.capLine", _line, ago) : _loc.TFormat("at.cre.cap", ago);
+        else if (ago.Length == 0) _capText = CreLine > 0 ? _loc.TFormat("at.cre.capLineOnly", CreLine) : "";
+        else _capText = CreLine > 0 ? _loc.TFormat("at.cre.capLine", CreLine, ago) : _loc.TFormat("at.cre.cap", ago);
         return _capText;
     }
 
