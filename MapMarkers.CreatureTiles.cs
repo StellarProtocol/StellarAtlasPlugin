@@ -29,6 +29,10 @@ internal sealed partial class MapMarkers
     private const int MaxCreSprites = 48;
 
     public CreatureModel? CreatureSource;
+    // The creature SHOW chips (set by the plugin every map tick). The prestage gates that skip all work when no CHEST chip
+    // is on ("nothing shown") must still keep Asteria Plains staged for its creature flags (user report 2026-11-24:
+    // "when I remove all chest, magical creature also missing").
+    public int CreatureMask;
 
     private long[] _creN = Array.Empty<long>();          // per icon entry: creature flag n, 0 = a chest / point
     private readonly Dictionary<string, Sprite> _creSprites = new();

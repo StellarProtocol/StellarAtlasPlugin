@@ -96,6 +96,7 @@ public sealed partial class Plugin
         if (_scanner.HasPlayerPos)
         {
             var p = _scanner.PlayerPos;
+            _map.CreatureMask = CreatureMask;
             if (CharReady) _map.Tick(_scene, _fetchedOnce, p.y, _mask & ~Creatures.AllBits, _model, _scanner.Live, _opened, _services.Framework.TimeNow);
         }
     }

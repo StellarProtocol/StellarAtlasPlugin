@@ -87,7 +87,7 @@ public sealed partial class Plugin
         if (kind == HeadKind.Idle) return "";
         if (_sceneNameFor != _scene) { _sceneName = _lua.SceneName(_scene); _sceneNameFor = _sceneName.Length > 0 ? _scene : 0; _statusKey = null; }
         int chests = _model.ChestsOnMap, nearby = _model.Nearby, age = kind == HeadKind.Offline ? AgeBucket() : -1;
-        bool none = NothingShown;
+        bool none = NothingShown && !CreaturesShown;   // "nothing shown yet" only when no chip at all is on (creatures count)
         if (_statusKey != null && kind == _stKind && chests == _stChests && nearby == _stNearby && age == _stAge && none == _stNone && _line == _stLine)
             return _statusText;
         _stKind = kind; _stChests = chests; _stNearby = nearby; _stAge = age; _stNone = none; _stLine = _line; _statusKey = "ok";
