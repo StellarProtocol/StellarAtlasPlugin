@@ -8,6 +8,8 @@ namespace Stellar.Atlas;
 // sub-rows, each a fixed 4-column grid of 24 px chips of equal width:
 //   CHESTS        "<N> on this map"   Common · Epic · Legendary · Other
 //   COLLECTIBLES  "<N> on this map"   Books · (empty) · (empty) · (empty)
+//   MAGICAL CREATURES                 Golden Nappo · Silver Nappo · Loyal Boarlet / Lovely Boarlet · Breezy Boarlet
+//                                     (round head icon chips, Plugin.Window.Creatures.cs CreatureChipRows)
 // Herbs / Ore / Fishing were removed from the display (still reported).
 // ON  = fill colour @26 % + 1 px outline colour @60 %, bold label in a lightened colour, SOLID dot.
 // OFF = fill Muted @12 %, regular Muted label, HOLLOW ring.
@@ -32,7 +34,9 @@ public sealed partial class Plugin
         SubCaption(() => _loc.T("at.sub.chests"), ChestCountText),
         ChipRow(AtlasGroups.ChestChips),
         SubCaption(() => _loc.T("at.sub.collectibles"), BookCountText),
-        ChipRow(AtlasGroups.CollectChips));
+        ChipRow(AtlasGroups.CollectChips),
+        SubCaption(() => _loc.T("at.sub.creatures"), () => ""),
+        CreatureChipRows());
 
     // Bold 11 muted UPPERCASE sub-caption + right-aligned muted hint, pinned to 18 px. ToUpper runs only when the
     // language changes (cached), never per refresh.
@@ -117,12 +121,12 @@ public sealed partial class Plugin
 
     // [7] [8 px dot image] [5] [label] [7], centred in the fixed-width chip, 24 px tall (strut). Round = RoundRadius(24).
     private HudElement FilterChipShell(Func<byte[]?> dot, HudElement label, Func<ColorRgba> fill, Func<ColorRgba?>? outline,
-        HoverFlag hover, Action onClick)
+        HoverFlag hover, Action onClick, int iconUnits = DotUnits, float cellW = ChipCellW)
         => new BubbleElement(new SelectableElement(new RowElement(new HudElement[]
             {
                 new SpacerElement(7f, FilterChipH),
-                new CellElement(new RowElement(new HudElement[] { new ImageElement(dot, DotUnits, DotUnits) },
-                    Gap: 0.01f, Justify: RowJustify.Center), Width: DotUnits),
+                new CellElement(new RowElement(new HudElement[] { new ImageElement(dot, iconUnits, iconUnits) },
+                    Gap: 0.01f, Justify: RowJustify.Center), Width: iconUnits),
                 new SpacerElement(5f, 1f),
                 label,
                 new SpacerElement(7f, FilterChipH),
@@ -133,7 +137,7 @@ public sealed partial class Plugin
             OutlineColorFn = outline,   // null Func / null value = no ring (OFF chip)
             OutlineWidth = outline != null ? 1f : 0f,
             CornerRadius = RoundRadius(FilterChipH), PaddingX = 0f, PaddingY = 0f,
-            MaxWidth = ChipCellW,
+            MaxWidth = cellW,
         };
 
     // ── dot art: the bitmap pre-drawn for 8 units × the current UI scale (exact, else next larger) ─────────────────

@@ -269,6 +269,7 @@ internal sealed partial class MapMarkers
             _bSig = (_bSig ^ (ulong)p.Id) * 1099511628211UL;
             _bSig = (_bSig ^ (ulong)p.Chip) * 1099511628211UL;
         }
+        AppendCreatures(_bScene, _bJob, ref _bSig, ref _bSigAll);   // scene 7 stages its creature flags too
         _bPts = Array.Empty<AtlasPoint>();   // don't keep the scene's points alive
         return true;
     }

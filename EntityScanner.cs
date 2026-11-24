@@ -65,6 +65,7 @@ internal sealed partial class EntityScanner
     public void Reset()
     {
         _live.Clear();
+        ResetCreatures();
         HasPlayerPos = false;
         GoodPolls = 0;
     }
@@ -105,7 +106,8 @@ internal sealed partial class EntityScanner
             while (en != null && _enumMoveFn!(en))
             {
                 long uuid = _enumCurFn(en);
-                if (((uuid >> 6) & 31) != EntCollection) continue;
+                long et = (uuid >> 6) & 31;
+                if (et != EntCollection) { if (et == EntMonster && CreaturesOn) PollMonster(mgr, uuid); continue; }
                 if (_live.TryGetValue(uuid, out var e))
                 {
                     e.Seq = _seq;
@@ -138,6 +140,7 @@ internal sealed partial class EntityScanner
                 if (e.Flipped && AtlasGroups.IsChest(e.Chip)) Opened?.Invoke(e);
             }
             _gone.Clear();
+            if (CreaturesOn || _creatures.Count > 0) EndCreatureWalk();
             GoodPolls++;
         }
         catch (Exception ex) { GoodPolls = 0; WarnOnce(ref _pollErrLogged, "poll error: " + (ex.InnerException?.Message ?? ex.Message)); }

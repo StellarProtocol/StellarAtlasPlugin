@@ -24,6 +24,9 @@ namespace Stellar.Atlas;
 //   AtlasClient*.cs           HTTP (points + signed reports), disk cache — worker thread only
 //   NearestModel.cs           server + live merge, the 8 nearest shown points
 //   MapMarkers*.cs            the shown points as markers on the game's own big map + minimap (option C)
+//   Plugin.Creatures.cs       magical creatures (prototype atlas-creatures.tpl.html): Creatures.cs / CreatureModel.cs /
+//                             CreatureSightings.cs / SessionLua.cs / EntityScanner.Creatures.cs / AtlasClient.Creatures.cs,
+//                             panel Plugin.Window.Creatures*.cs, map tiles MapMarkers.CreatureTiles.cs
 public sealed partial class Plugin : IStellarPlugin
 {
     public string Name => "Atlas";
@@ -89,6 +92,10 @@ public sealed partial class Plugin : IStellarPlugin
         _map     = new MapMarkers(services, _client);
         _ground  = new GroundProbe(services);
         _reports = new ReportQueue(_client, () => _services.Framework.TimeNow, GetInstall, SetInstall, m => _services.Log.Info(m));
+        _session   = new SessionLua(services);
+        _sightings = new CreatureSightings(_client, () => _services.Framework.TimeNow, GetInstall, SetInstall, m => _services.Log.Info(m));
+        _map.CreatureSource = _cre;
+        _scanner.CreatureLeft = OnCreatureLeft;
         _scanner.Appeared = OnLiveAppeared;
         _scanner.Opened   = OnLiveOpened;
         _loc.LanguageChanged += OnLanguageChanged;
@@ -147,6 +154,7 @@ public sealed partial class Plugin : IStellarPlugin
         _scanner.Reset();
         _model.Clear();
         _lua.OnLogout();
+        OnCreaturesLogout();
         _map.OnLogout();
         _scene = 0;
         _charId = 0;
@@ -205,6 +213,7 @@ public sealed partial class Plugin : IStellarPlugin
         _mask ^= bit;
         if (_charId != 0) { _cfg.Set<int>(MaskKey(_charId), _mask); _cfg.Save(); }
         _map.NoteFilterChanged(_services.Framework.TimeNow);   // coalesce a burst of chip clicks into one map rebuild
+        if ((bit & Creatures.AllBits) != 0) OnCreatureChipToggled();
         RecomputeNearest();
     }
 

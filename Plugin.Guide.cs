@@ -34,7 +34,8 @@ public sealed partial class Plugin
         public bool HasY;                 // exact height (live entity or server row)
         public bool HasGround;            // ground height under (x, z) known (GroundY)
         public float GroundY, NextGroundAt;
-        public float ArrivedAt, MarkedY;
+        public float ArrivedAt, MarkedY, MarkedX, MarkedZ;   // where the marker was last placed
+        public int Cre;                   // a magical creature (Creatures index + 1), 0 = a chest / point (Plugin.Creatures.cs)
     }
 
     private struct FlashState
@@ -89,7 +90,7 @@ public sealed partial class Plugin
     {
         float y = GuideY();
         _guide.MarkerSet = _lua.SetGuide(_scene, _guide.X, y, _guide.Z);
-        _guide.MarkedY = y;
+        _guide.MarkedY = y; _guide.MarkedX = _guide.X; _guide.MarkedZ = _guide.Z;
         if (!_guide.MarkerSet) _services.Log.Warning("[Atlas] guide marker could not be set (game Lua not ready?)");
     }
 
@@ -104,6 +105,7 @@ public sealed partial class Plugin
     private bool IsGuided(in NearestModel.Row r)
     {
         if (!_guide.Active || _guide.Arrived) return false;
+        if (_guide.Cre != 0) return false;   // a creature is guided, not a point
         if (r.Uuid != 0 && r.Uuid == _guide.Uuid) return true;
         if (r.ServerId != 0 && r.ServerId == _guide.ServerId) return true;
         if (r.Chip != _guide.Chip) return false;
@@ -123,11 +125,16 @@ public sealed partial class Plugin
             return;
         }
 
-        if (FindLiveTarget() is { } live)
+        bool found = false;
+        float tx = 0f, ty = 0f, tz = 0f;
+        if (_guide.Cre != 0) found = CreatureTarget(out tx, out ty, out tz);   // creatures move: follow live / the row
+        else if (FindLiveTarget() is { } live) { found = true; tx = live.X; ty = live.Y; tz = live.Z; _guide.Uuid = live.Uuid; }
+        if (found)
         {
-            bool moved = MathF.Abs(live.X - _guide.X) + MathF.Abs(live.Z - _guide.Z) > 1f
-                         || MathF.Abs(live.Y - _guide.MarkedY) > ResetYDelta;
-            _guide.Uuid = live.Uuid; _guide.X = live.X; _guide.Y = live.Y; _guide.Z = live.Z; _guide.HasY = true;
+            // a wandering creature re-sets the marker (one Lua call) only after 3 m, a chest after 1 m
+            float step = _guide.Cre != 0 ? 3f : 1f;
+            bool moved = MathF.Abs(tx - _guide.MarkedX) + MathF.Abs(tz - _guide.MarkedZ) > step || MathF.Abs(ty - _guide.MarkedY) > ResetYDelta;
+            _guide.X = tx; _guide.Y = ty; _guide.Z = tz; _guide.HasY = true;
             if (moved && _guide.MarkerSet) SetMarker();
         }
         else if (!_guide.HasY && !_guide.HasGround)
@@ -162,7 +169,7 @@ public sealed partial class Plugin
     // Scanner: a chest this character opened (OnLiveOpened has already recorded it).
     private void OnChestOpened(LiveEnt e)
     {
-        bool wasTarget = _guide.Active && (e.Uuid == _guide.Uuid
+        bool wasTarget = _guide.Active && _guide.Cre == 0 && (e.Uuid == _guide.Uuid
                          || (e.Chip == _guide.Chip && Sq(e.X - _guide.X) + Sq(e.Z - _guide.Z) <= SameRadius * SameRadius));
         var info = _lua.Cfg(e.Cfg);
         _flash = new FlashState

@@ -8,6 +8,7 @@ namespace Stellar.Atlas;
 //   ToolHeader   [accent map tile] Atlas / ● "<map> · N chests on this map · M nearby" (green dot = synced; amber
 //                "Offline · showing the copy from 2 h ago" when the server can't be reached)
 //   SHOW         filter chips (Plugin.Window.Show.cs)
+//   MAGICAL CREATURES  only while a creature chip is on (Plugin.Window.Creatures.cs)
 //   NEAREST      8 reserved rows (Plugin.Window.Nearest.cs)
 //   footer       Stop guiding (Neutral) · muted "Shared map" hint
 // First open (2a): the same header + an informational notice tile ("Atlas is a shared map") + one full-width Primary
@@ -32,6 +33,7 @@ public sealed partial class Plugin
     private HudElement BuildMain() => new ColumnElement(new HudElement[]
     {
         BuildShowPanel(),
+        new ConditionalElement(() => CreaturesShown, BuildCreaturePanel()),   // Plugin.Window.Creatures.cs
         BuildNearestPanel(),
         BuildFooter(),
     }, Gap: 8f);

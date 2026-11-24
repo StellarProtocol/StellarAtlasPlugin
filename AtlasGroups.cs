@@ -36,7 +36,8 @@ internal static class AtlasGroups
 
     // A saved mask: keep the bits of chips that still exist; drop the old More… groups, the More…-expanded flag (bit 31)
     // and the removed Herbs / Ore / Fishing chips.
-    public static int MigrateMask(int saved) => saved & KeptBits;
+    // The magical creature chips (bits 16..20, Creatures.cs) are kept too; a mask saved before them has them off.
+    public static int MigrateMask(int saved) => saved & (KeptBits | Creatures.AllBits);
 
     // Server group names (model.KnownGroups).
     public const string GChest = "chest", GOre = "ore", GHerb = "herb", GFishing = "fishing";

@@ -96,7 +96,7 @@ public sealed partial class Plugin
         if (_scanner.HasPlayerPos)
         {
             var p = _scanner.PlayerPos;
-            if (CharReady) _map.Tick(_scene, _fetchedOnce, p.y, _mask, _model, _scanner.Live, _opened, _services.Framework.TimeNow);
+            if (CharReady) _map.Tick(_scene, _fetchedOnce, p.y, _mask & ~Creatures.AllBits, _model, _scanner.Live, _opened, _services.Framework.TimeNow);
         }
     }
 
@@ -107,6 +107,7 @@ public sealed partial class Plugin
         TickSharingEdge();
         TickAbsent();
         if (Shown || _guide.Active) RecomputeNearest();
+        if (CreaturesShown && (Shown || _guide.Cre != 0)) RecomputeCreatures();
         _map.PollIcons(_services.Framework.TimeNow);
     }
 
@@ -123,6 +124,7 @@ public sealed partial class Plugin
         }
         if (_scene > 0 && !_fetchInFlight && _lastFetchAt >= 0f && now - _lastFetchAt >= RefreshSeconds) Fetch();
         TickFlash(now);
+        TickCreatures(now);
     }
 
     private void OnSceneChange(int scene)
@@ -136,6 +138,7 @@ public sealed partial class Plugin
         _model.Clear();
         _map.OnScene(scene, _services.Framework.TimeNow);
         _opened.SetScene(scene);
+        _sightings.ResetSeen();
         _fetchState = AtlasClient.FetchState.NoData;
         _fetchedOnce = false;
         _fetchedUnix = 0;
