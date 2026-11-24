@@ -213,7 +213,7 @@ public sealed partial class Plugin
     private void GuideToSelectedLine()
     {
         if (!ClCanGuide || !LinePos(_clIdx, _clSel, out float x, out float y, out float z)) return;
-        bool away = _scene != Creatures.Scene;
+        bool away = !InCreatureScene;
         _guide = new GuideState { Active = true, Cre = _clIdx + 1, Line = _clSel, Scene = Creatures.Scene, X = x, Y = y, Z = z,
                                   HasY = away || y != 0f };
         if (!_guide.HasY) TryGroundHeight(_services.Framework.TimeNow);

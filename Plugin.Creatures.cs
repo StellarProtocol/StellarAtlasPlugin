@@ -36,7 +36,11 @@ public sealed partial class Plugin
 
     private int CreatureMask => _mask & Creatures.AllBits;
     // Lines are per scene: "your line" only means something in Asteria Plains. Elsewhere every alive line is just "Line N".
-    private bool InCreatureScene => _scene == Creatures.Scene;
+    // The scene the player is ACTUALLY in (Lua Z.StageMgr, read with the line at 1 Hz and on every scene change). _scene
+    // (ITable.CurrentSceneId) follows the scene the big map browses — fine for the chest list, wrong for "you are here".
+    private int _actualScene;
+    private int ActualScene => _actualScene > 0 ? _actualScene : _scene;
+    private bool InCreatureScene => ActualScene == Creatures.Scene;
     private int CreLine => InCreatureScene ? _line : 0;
     private bool CreaturesShown => CreatureMask != 0;
 
@@ -52,11 +56,11 @@ public sealed partial class Plugin
     // 1 Hz (SlowTick, world-ready).
     private void TickCreatures(float now)
     {
-        bool inScene = _scene == Creatures.Scene;
+        ReadLine();   // every second: the line + the actual scene (one constant Lua chunk)
+        bool inScene = InCreatureScene;
         _scanner.CreaturesOn = inScene;
         if (!CharReady) return;
         if (!_serverResolved && now >= _serverTryAt) ResolveServer(now);
-        if (inScene || Shown) ReadLine();
 
         bool want = CreaturesShown && (inScene || Shown);
         if (want && _creServer.Length > 0 && !_creFetchInFlight && now - _creFetchAt >= FetchEvery) FetchCreatures(now);
@@ -83,12 +87,24 @@ public sealed partial class Plugin
 
     private void ReadLine()
     {
-        int line = _session.ReadLine();
+        int line = _session.ReadLine(out int actual);
+        NoteActualScene(actual);
         if (line == _line) return;
         if (!_lineLogged || line != 0)
             _services.Log.Info($"[Atlas] line: {line} (sceneline_data.PlayerLineId{(_lineLogged ? "" : ", first read")})");
         _lineLogged = true;
         _line = line;
+    }
+
+    // Scene change (Plugin.Tick.cs): refresh the actual scene at once (the line is re-read on the next 1 Hz tick, so a
+    // stale line of the old scene never shows). Logged when it differs from the table scene (big-map browse).
+    private void RefreshActualScene() { _session.ReadLine(out int actual); NoteActualScene(actual); }
+
+    private void NoteActualScene(int actual)
+    {
+        if (actual <= 0 || actual == _actualScene) return;
+        _actualScene = actual;
+        if (actual != _scene) _services.Log.Info($"[Atlas] actual scene {actual} (table scene {_scene}: big map browsing)");
     }
 
     private void FetchCreatures(float now)
@@ -205,6 +221,7 @@ public sealed partial class Plugin
     private void OnCreaturesLogout()
     {
         _line = 0;
+        _actualScene = 0;
         _serverResolved = false;
         _serverTryAt = -100f;
         _session.OnLogout();
@@ -225,7 +242,7 @@ public sealed partial class Plugin
         if (!r.HasPos) return;
         // Goal scene = Asteria Plains even from another map (the PositionShare goal takes the scene id). Away from it there is
         // no physics for the ground raycast → the server / fixed-spot y is used as is.
-        bool away = _scene != Creatures.Scene;
+        bool away = !InCreatureScene;
         _guide = new GuideState { Active = true, Cre = r.Idx + 1, Scene = Creatures.Scene, Uuid = r.Uuid, X = r.X, Y = r.Y, Z = r.Z,
                                   HasY = away || r.Y != 0f };
         if (!_guide.HasY) TryGroundHeight(_services.Framework.TimeNow);

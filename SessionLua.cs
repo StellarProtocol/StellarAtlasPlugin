@@ -16,7 +16,8 @@ internal sealed class SessionLua
 {
     private const string Defs =
         "rawset(_G,'__atlas_line',function()" +
-        " rawset(_G,'__at_line',nil)" +
+        " rawset(_G,'__at_line',nil) rawset(_G,'__at_cur',nil)" +
+        " pcall(function() rawset(_G,'__at_cur', tonumber(Z.StageMgr.GetCurrentSceneId())) end)" +
         " pcall(function()" +
         "  local d = Z.DataMgr.Get(\"sceneline_data\")" +
         "  if d ~= nil then rawset(_G,'__at_line', tonumber(d.PlayerLineId)) end" +
@@ -62,10 +63,14 @@ internal sealed class SessionLua
         return Lua.TryReadGlobalBool("__atlas_has2", out has) && has;
     }
 
-    // The current line number, or 0 when unknown (not set yet / Lua not ready).
-    public int ReadLine()
+    // The current line number, or 0 when unknown (not set yet / Lua not ready). `scene` = the scene the player is
+    // actually in (Z.StageMgr.GetCurrentSceneId), 0 when unknown — NOT ITable.CurrentSceneId, which follows the scene the
+    // big map is browsing (in-game 2026-11-24: browsing Asteria Plains from Asterleeds turned it to 7).
+    public int ReadLine(out int scene)
     {
+        scene = 0;
         if (!Call(LineChunk)) return 0;
+        if (Lua.TryReadGlobalNumber("__at_cur", out double cur) && cur > 0 && cur < 100000) scene = (int)cur;
         return Lua.TryReadGlobalNumber("__at_line", out double v) && v >= 1 && v < 100000 ? (int)v : 0;
     }
 
