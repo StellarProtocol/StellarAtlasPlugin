@@ -84,5 +84,7 @@
   "at.cl.updated": "na-update {0} ang nakalipas",
   "at.cl.pick": "I-click ang line para makita kung nasaan",
   "at.cl.guide": "Gabayan ako roon",
-  "at.cl.close": "Isara"
+  "at.cl.close": "Isara",
+  "at.cl.guidePending": "Magsisimula ang gabay pagdating mo sa {0}",
+  "at.cl.guideVia": "Ginagabayan ka papuntang {0}"
 }

@@ -84,5 +84,7 @@
   "at.cl.updated": "updated {0} ago",
   "at.cl.pick": "Click a line to see where it is",
   "at.cl.guide": "Guide me there",
-  "at.cl.close": "Close"
+  "at.cl.close": "Close",
+  "at.cl.guidePending": "Guide starts when you reach {0}",
+  "at.cl.guideVia": "Guiding you toward {0}"
 }

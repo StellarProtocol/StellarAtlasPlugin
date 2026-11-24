@@ -84,5 +84,7 @@
   "at.cl.updated": "{0} 전 갱신",
   "at.cl.pick": "라인을 클릭하면 위치가 표시됩니다",
   "at.cl.guide": "길 안내",
-  "at.cl.close": "닫기"
+  "at.cl.close": "닫기",
+  "at.cl.guidePending": "{0}에 도착하면 안내가 시작됩니다",
+  "at.cl.guideVia": "{0} 방향으로 안내 중"
 }

@@ -84,5 +84,7 @@
   "at.cl.updated": "{0}前に更新",
   "at.cl.pick": "ラインをクリックすると場所を表示します",
   "at.cl.guide": "案内する",
-  "at.cl.close": "閉じる"
+  "at.cl.close": "閉じる",
+  "at.cl.guidePending": "{0}に着くと案内が始まります",
+  "at.cl.guideVia": "{0}へ案内中"
 }

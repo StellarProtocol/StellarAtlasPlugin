@@ -61,14 +61,27 @@ internal sealed class GameLua
         "  if row ~= nil then rawset(_G,'__at_scene', row.Name) end" +
         " end)" +
         " end)" +
+        // Guide marker. A goal in ANOTHER scene is guided the way the game guides a quest goal there
+        // (quest_goal_guide_vm.getGuideGoalInfo): the shown goal is the current scene's teleport zone towards that scene
+        // (Z.GoalGuideMgr:GetTpZoneUidBetweenScene(cur, to) → ZoneEntityTableMgr row Position, GoalPosType.Zone), the real
+        // goal goes in as the sourceGoalList. No such zone → nothing is set (mode 0 = pending; the plugin re-sets it on
+        // arrival). Result: __at_gmode 1 = direct, 2 = via teleport zone __at_gtp, 0 = pending, nil = failed.
         " rawset(_G,'__atlas_guide',function(sid, x, y, z)" +
-        " rawset(_G,'__at_gok',nil)" +
+        " rawset(_G,'__at_gmode',nil) rawset(_G,'__at_gtp',0)" +
         " pcall(function()" +
         "  local vm = Z.VMMgr.GetVM(\"goal_guide\")" +
-        "  if sid == nil then vm.SetGuideGoals(E.GoalGuideSource.PositionShare, nil) rawset(_G,'__at_gok',true) return end" +
-        "  local info = Panda.ZGame.GoalPosInfo.New(E.GoalGuideSource.PositionShare, sid, -1, Z.GoalPosType.Position, Vector3.New(x, y, z))" +
-        "  vm.SetGuideGoals(E.GoalGuideSource.PositionShare, {info})" +
-        "  rawset(_G,'__at_gok',true)" +
+        "  local src = E.GoalGuideSource.PositionShare" +
+        "  if sid == nil then vm.SetGuideGoals(src, nil) rawset(_G,'__at_gmode',1) return end" +
+        "  local info = Panda.ZGame.GoalPosInfo.New(src, sid, -1, Z.GoalPosType.Position, Vector3.New(x, y, z))" +
+        "  local cur = Z.StageMgr.GetCurrentSceneId()" +
+        "  if cur == sid then vm.SetGuideGoals(src, {info}) rawset(_G,'__at_gmode',1) return end" +
+        "  local uid = Z.GoalGuideMgr:GetTpZoneUidBetweenScene(cur, sid)" +
+        "  local row = uid > 0 and Z.TableMgr.GetTable(\"ZoneEntityTableMgr\").GetRow(uid) or nil" +
+        "  if row == nil then rawset(_G,'__at_gmode',0) return end" +
+        "  local p = row.Position" +
+        "  local tp = Panda.ZGame.GoalPosInfo.New(src, cur, uid, Z.GoalPosType.Zone, Vector3.New(p[1], p[2], p[3]))" +
+        "  vm.SetGuideGoals(src, {tp}, {info})" +
+        "  rawset(_G,'__at_gtp',uid) rawset(_G,'__at_gmode',2)" +
         " end)" +
         " end)";
 
@@ -157,16 +170,21 @@ internal sealed class GameLua
         return name;
     }
 
-    // Sets (or with sceneId <= 0 clears) the game's guide marker. Returns whether Lua reported success.
-    public bool SetGuide(int sceneId, float x, float y, float z)
+    // Sets (or with sceneId <= 0 clears) the game's guide marker. Returns 1 = set directly, 2 = set via the current
+    // scene's teleport zone towards `sceneId` (tpZone = its uid), 0 = another scene with no teleport zone (nothing set:
+    // pending), -1 = failed (Lua not ready / error).
+    public int SetGuide(int sceneId, float x, float y, float z, out int tpZone)
     {
+        tpZone = 0;
         string chunk = sceneId <= 0
             ? "__atlas_guide(nil)"
             : "__atlas_guide(" + sceneId.ToString(CultureInfo.InvariantCulture) + "," + F(x) + "," + F(y) + "," + F(z) + ")";
-        return Call(chunk) && Lua.TryReadGlobalBool("__at_gok", out var ok) && ok;
+        if (!Call(chunk) || !Lua.TryReadGlobalNumber("__at_gmode", out double mode)) return -1;
+        if (Lua.TryReadGlobalNumber("__at_gtp", out double tp)) tpZone = (int)tp;
+        return (int)mode;
     }
 
-    public void ClearGuide() => SetGuide(0, 0f, 0f, 0f);
+    public void ClearGuide() => SetGuide(0, 0f, 0f, 0f, out _);
 
     public void OnLogout() => _defined = false;   // a new Lua state may come with the next login
 

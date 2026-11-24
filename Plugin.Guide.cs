@@ -39,6 +39,8 @@ public sealed partial class Plugin
         public int Scene;                 // the goal's scene (a creature: Asteria Plains, from any map); 0 = the current scene
         public int Line;                  // a creature guided to ONE line (lines dialog); 0 = follow the panel row
         public bool Remark;               // re-place the marker on the next tick (a creature guide kept over a scene change)
+        public bool Pending;              // goal in another scene with no teleport zone towards it: nothing shown until arrival
+        public bool ViaTeleport;          // goal in another scene, guided to this scene's teleport zone towards it
     }
 
     private struct FlashState
@@ -97,14 +99,39 @@ public sealed partial class Plugin
     private void SetMarker()
     {
         float y = GuideY();
-        _guide.MarkerSet = _lua.SetGuide(GuideScene, _guide.X, y, _guide.Z);
+        int mode = _lua.SetGuide(GuideScene, _guide.X, y, _guide.Z, out int tp);
+        _guide.MarkerSet = mode > 0;
+        _guide.Pending = mode == 0;        // another scene with no teleport zone towards it: set on arrival (Remark)
+        _guide.ViaTeleport = mode == 2;
         _guide.MarkedY = y; _guide.MarkedX = _guide.X; _guide.MarkedZ = _guide.Z;
-        if (!_guide.MarkerSet) _services.Log.Warning("[Atlas] guide marker could not be set (game Lua not ready?)");
+        LogGuide(mode, tp, y);
+    }
+
+    // "[Atlas] guide set: …" on every set (a creature following itself is logged at most every 10 s with the same result).
+    private int _gLogMode = int.MinValue, _gLogCre, _gLogLine, _gLogScene;
+    private float _gLogAt = -100f;
+
+    private void LogGuide(int mode, int tp, float y)
+    {
+        float now = _services.Framework.TimeNow;
+        if (mode == _gLogMode && _guide.Cre == _gLogCre && _guide.Line == _gLogLine && _scene == _gLogScene && now - _gLogAt < 10f) return;
+        _gLogMode = mode; _gLogCre = _guide.Cre; _gLogLine = _guide.Line; _gLogScene = _scene; _gLogAt = now;
+        string what = _guide.Cre != 0 ? $"creature {Creatures.Ids[_guide.Cre - 1]} line {_guide.Line}" : $"point {(_guide.ServerId != 0 ? _guide.ServerId : _guide.Uuid)}";
+        string result = mode switch { 1 => "set", 2 => $"via teleport zone {tp}", 0 => "pending (no teleport zone from this scene)", _ => "FAILED (game Lua not ready?)" };
+        _services.Log.Info($"[Atlas] guide set: {what} scene {GuideScene} (player scene {_scene}) pos ({_guide.X:F1}, {y:F1}, {_guide.Z:F1}) → {result}");
+    }
+
+    private void ClearMarker(string why)
+    {
+        try { _lua.ClearGuide(); } catch { }
+        _guide.MarkerSet = false;
+        _gLogMode = int.MinValue;
+        _services.Log.Info($"[Atlas] guide cleared ({why})");
     }
 
     private void StopGuide(bool clearMarker)
     {
-        if (_guide.Active && _guide.MarkerSet && clearMarker) { try { _lua.ClearGuide(); } catch { } }
+        if (_guide.Active && _guide.MarkerSet && clearMarker) ClearMarker("stop");
         _guide = default;
     }
 
@@ -156,7 +183,7 @@ public sealed partial class Plugin
         float d = GuideInScene ? NearestModel.Dist(_guide.X, GuideY(), _guide.Z, GuideHasHeight, p.x, p.y, p.z) : float.MaxValue;
         if (d <= ArriveRadius)
         {
-            if (_guide.MarkerSet) { try { _lua.ClearGuide(); } catch { } }
+            if (_guide.MarkerSet) ClearMarker("arrived");
             _guide.MarkerSet = false;
             _guide.Arrived = true;
             _guide.ArrivedAt = now;
@@ -188,7 +215,7 @@ public sealed partial class Plugin
             Label = info.Name.Length > 0 ? info.Name : _loc.T(AtlasGroups.LabelKey(e.Chip)),
             Until = _services.Framework.TimeNow + FlashSeconds,
         };
-        if (wasTarget && _guide.MarkerSet) { try { _lua.ClearGuide(); } catch { } _guide.MarkerSet = false; }
+        if (wasTarget && _guide.MarkerSet) ClearMarker("chest opened");
         RecomputeNearest();
     }
 

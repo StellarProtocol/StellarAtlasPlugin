@@ -137,7 +137,9 @@ public sealed partial class Plugin
         int hp = has && l!.Alive && l.MaxHp > 0 ? (int)Math.Clamp(l.Hp * 100 / l.MaxHp, 0, 100) : -1;
         long sig = 17L * 31 + _clSel; sig = sig * 31 + hp; sig = sig * 31 + (has ? RuntimeHelpers.GetHashCode(l!.Spot) : 0);
         sig = sig * 31 + (has && l!.Alive ? 1 : 0); sig = sig * 31 + dist; sig = sig * 31 + dir; sig = sig * 31 + (near ? 1 : 0);
-        sig = sig * 31 + _clIdx; sig = sig * 31 + (pos ? 1 : 0);
+        // the guide to this line from another map: via the teleport zone towards Asteria Plains, or pending until arrival
+        int gstate = _guide.Active && _guide.Cre == _clIdx + 1 && _guide.Line == _clSel ? (_guide.Pending ? 1 : _guide.ViaTeleport ? 2 : 0) : 0;
+        sig = sig * 31 + _clIdx; sig = sig * 31 + (pos ? 1 : 0); sig = sig * 31 + gstate;
         if (sig == 0) sig = 1;
         if (sig == _clDetailSig) return _clDetail;
         _clDetailSig = sig;
@@ -147,6 +149,8 @@ public sealed partial class Plugin
         else text = Join(Join(text, l.Spot ?? ""), hp >= 0 ? _loc.TFormat("at.cre.hp", hp) : "");
         if (near) text = Join(text, DistText(dist) + " " + _loc.T(DirKey(dir)));
         else if (pos) text = Join(text, CreSceneName());
+        if (gstate == 1) text = Join(text, _loc.TFormat("at.cl.guidePending", CreSceneName()));
+        else if (gstate == 2) text = Join(text, _loc.TFormat("at.cl.guideVia", CreSceneName()));
         return _clDetail = text;
     }
 }

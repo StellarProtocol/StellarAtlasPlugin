@@ -133,7 +133,7 @@ public sealed partial class Plugin
         if (SharingActive) _reports.Tick(force: true);   // flush the old scene's finds now
         // a point guide never survives a scene change; a creature guide (its goal names Asteria Plains) is kept and its
         // marker re-placed once the new scene is up, so guiding from another map still works after the loading screen
-        if (_guide.Cre == 0) StopGuide(clearMarker: true); else _guide.Remark = _guide.MarkerSet;
+        if (_guide.Cre == 0) StopGuide(clearMarker: true); else _guide.Remark = _guide.MarkerSet || _guide.Pending;   // pending: set on arriving in its scene
         _line = 0;                                         // lines are per scene: re-read within 1 s (Plugin.Creatures.cs)
         _groundCache.Clear();
         NoteWorldUnstable();

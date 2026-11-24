@@ -84,5 +84,7 @@
   "at.cl.updated": "diperbarui {0} lalu",
   "at.cl.pick": "Klik line untuk melihat lokasinya",
   "at.cl.guide": "Pandu ke sana",
-  "at.cl.close": "Tutup"
+  "at.cl.close": "Tutup",
+  "at.cl.guidePending": "Panduan dimulai saat kamu tiba di {0}",
+  "at.cl.guideVia": "Memandu kamu ke arah {0}"
 }
