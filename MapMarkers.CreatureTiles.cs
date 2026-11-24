@@ -7,8 +7,9 @@ using UnityEngine;
 namespace Stellar.Atlas;
 
 // Magical creature flags on the game's big map + minimap (approved prototype atlas-creatures.tpl.html, map mock):
-// round head tile in a 2 px dark ring; alive on your line = full colour + green ring; other lines = faded + a small line
-// badge ("7", "2·6·9"); an absent fixed-schedule boarlet = faded + its next spawn time ("14:00").
+// round head tile in a 2 px dark ring; alive on your line = full colour + green ring; other lines = full colour, dark ring + an opaque line
+// badge ("7", "2·6·9", white on #2a2118, light 1 px edge); an absent fixed-schedule boarlet = 80 % opacity, 30 % desaturated +
+// its next spawn time ("14:00", opaque). In-game 2026-11-24 the first build faded other-line tiles to 55 % → "too transparent".
 //
 // The flags ride the same wrapper / push / prestage as the chests (MapMarkers.cs): Select appends the creature model's
 // PUBLISHED set when the current scene is Asteria Plains, and the prestage build of scene 7 appends it too — so entering
@@ -16,7 +17,7 @@ namespace Stellar.Atlas;
 // and at most once a minute (CreatureModel.UpdateFlags); everything else (your line, badges, times, hp) is the TILE, which
 // the icon pass swaps in place — never a rebuild.
 //
-// Tiles: the head disc art is pre-drawn per unit size (tools/icons/gen-creature-icons.py: mapc-<id>-here|dim-<px>.png).
+// Tiles: the head disc art is pre-drawn per unit size (tools/icons/gen-creature-icons.py: mapc-<id>-here|other|absent-<px>.png).
 // The badge / time pill is COMPOSITED onto a copy of those pixels at runtime from pre-drawn glyph pixels of the same size
 // (mapc-glyphs-<px>.png) — pixel copies and an anti-aliased rounded rect, never a scaled bitmap (house icon rule). Pixel
 // work goes through ONE span over the IL2CPP array (ChatTools Plugin.Avatars.Bake.cs: per-element access = several native
@@ -32,7 +33,7 @@ internal sealed partial class MapMarkers
     private long[] _creN = Array.Empty<long>();          // per icon entry: creature flag n, 0 = a chest / point
     private readonly Dictionary<string, Sprite> _creSprites = new();
     private readonly List<Texture2D> _creTextures = new();
-    private readonly Dictionary<string, Color32[]?> _crePixels = new();   // "<id>-here|dim" → base tile pixels (cur size)
+    private readonly Dictionary<string, Color32[]?> _crePixels = new();   // "<id>-here|other|absent" → base tile pixels (cur size)
     private Color32[]? _glyphPx;
     private int _glyphW, _glyphH, _glyphCell, _creSize;
     private readonly int[] _glyphX0 = new int[Glyphs.Length], _glyphX1 = new int[Glyphs.Length];
@@ -72,7 +73,7 @@ internal sealed partial class MapMarkers
         long t0 = Stopwatch.GetTimestamp();
         try
         {
-            var basePx = BasePixels(t.Idx, t.Kind == CreatureModel.TileKind.Here, px);
+            var basePx = BasePixels(t.Idx, t.Kind, px);
             if (basePx == null || !EnsureGlyphs(px)) { CreFail("creature tile art missing for " + px + " px"); return null; }
             var buf = (Color32[])basePx.Clone();
             if (t.Badge.Length > 0) DrawPill(buf, px, t.Badge, t.Time, t.Kind == CreatureModel.TileKind.Here);
@@ -104,9 +105,9 @@ internal sealed partial class MapMarkers
         return TileSizes[^1];
     }
 
-    private Color32[]? BasePixels(int idx, bool here, int px)
+    private Color32[]? BasePixels(int idx, CreatureModel.TileKind kind, int px)
     {
-        string key = Creatures.Ids[idx] + (here ? "-here" : "-dim");
+        string key = Creatures.Ids[idx] + (kind == CreatureModel.TileKind.Here ? "-here" : kind == CreatureModel.TileKind.Absent ? "-absent" : "-other");
         if (_crePixels.TryGetValue(key, out var p)) return p;
         p = DecodePixels($"Stellar.Atlas.mapc-{key}-{px}.png", px, px, out _, out _);
         _crePixels[key] = p;
@@ -172,8 +173,8 @@ internal sealed partial class MapMarkers
         int pw = len + 2 * padX, ph = _glyphH + 2 * padY;
         int x0 = time ? (px - pw) / 2 : px - pw - 1, y0 = 0;
         float r = time ? MathF.Max(2f, ph / 3f) : ph / 2f;
-        var fill = time ? new Color32(26, 20, 30, 217) : here ? new Color32(0x2f, 0x7d, 0x4e, 255) : new Color32(0x2a, 0x21, 0x18, 255);
-        Color32? edge = time ? null : here ? new Color32(0x5f, 0xd3, 0x8d, 255) : new Color32(0x6b, 0x5a, 0x4a, 255);
+        var fill = time ? new Color32(26, 20, 30, 255) : here ? new Color32(0x2f, 0x7d, 0x4e, 255) : new Color32(0x2a, 0x21, 0x18, 255);
+        Color32? edge = time ? null : here ? new Color32(0x5f, 0xd3, 0x8d, 255) : new Color32(0xd9, 0xcb, 0xbd, 255);
         RoundRect(buf, px, x0, y0, pw, ph, r, fill, edge);
         var ink = time ? new Color32(0xff, 0xcc, 0x73, 255) : new Color32(255, 255, 255, 255);
         int x = x0 + padX;

@@ -9,7 +9,9 @@ Window art (Resources/creatures):
 Map art (Resources/creatures) — the unit canvas is the chest tiles' (32 / 42 / 64 / 96, tools/make-map-icons.py):
   mapc-<id>-here-<px>.png   head disc in a 2 px dark ring #2a2118 + a green ring #5fd38d with a soft green halo
                             (alive on your line)
-  mapc-<id>-dim-<px>.png    head disc in the dark ring, faded (55 % opacity, desaturated 50 %) (other lines / absent)
+  mapc-<id>-other-<px>.png  head disc in the dark ring, FULL opacity, no desaturation (alive on other lines; in-game
+                            2026-11-24: the old 55 % faded tile was "too transparent" on the map art)
+  mapc-<id>-absent-<px>.png head disc in the dark ring at 80 % opacity, desaturated 30 % (absent fixed-schedule boarlet)
   mapc-glyphs-<px>.png      white badge glyphs "0123456789·:+" in fixed cells (CELL_W[px] wide) for the line badge
                             and the next-spawn time label. The plugin trims each cell's empty columns and COMPOSITES
                             these pixels onto the tile (no scaling) — MapMarkers.CreatureTiles.cs.
@@ -81,7 +83,8 @@ def ring_layer(size: int, outer: float, width: float, color) -> Image.Image:
     return layer
 
 
-def map_tile(src: Image.Image, n: int, here: bool) -> Image.Image:
+def map_tile(src: Image.Image, n: int, kind: str) -> Image.Image:
+    here = kind == "here"
     d = rnd(n * DISC)
     if d % 2 != n % 2:
         d += 1                                       # whole-pixel, equal side margins
@@ -104,7 +107,7 @@ def map_tile(src: Image.Image, n: int, here: bool) -> Image.Image:
     if here:
         halo = ring_layer(d + 2 * hw, d + 2 * hw, hw, (0x5f, 0xd3, 0x8d, 115))
         out.alpha_composite(halo, (off - hw, top - hw))
-    out.alpha_composite(tile if here else dim(tile, 0.5, 0.55), (off, top))
+    out.alpha_composite(dim(tile, 0.7, 0.8) if kind == "absent" else tile, (off, top))
     return out
 
 
@@ -153,11 +156,10 @@ def main() -> None:
             dim(h, 0.4, 0.45).save(f"{out}/cre-{cid}-dim-{s}.png")
         row = []
         for n in MAP_SIZES:
-            here = map_tile(src, n, True)
-            other = map_tile(src, n, False)
-            here.save(f"{out}/mapc-{cid}-here-{n}.png")
-            other.save(f"{out}/mapc-{cid}-dim-{n}.png")
-            row += [here, other]
+            tiles = [map_tile(src, n, k) for k in ("here", "other", "absent")]
+            for k, im in zip(("here", "other", "absent"), tiles):
+                im.save(f"{out}/mapc-{cid}-{k}-{n}.png")
+            row += tiles
         rows.append(row)
     for n in MAP_SIZES:
         glyph_strip(n).save(f"{out}/mapc-glyphs-{n}.png")
