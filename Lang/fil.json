@@ -4,6 +4,7 @@
   "at.status.syncedNone": "{0} · {1} chest sa mapang ito · wala pang ipinapakita",
   "at.status.offline": "Offline · kopya mula {0} ang nakalipas",
   "at.status.offlineNone": "Offline · wala pang naka-save na kopya",
+  "at.status.line": "Line {0}",
   "at.age.min": "{0} min",
   "at.age.h": "{0} oras",
   "at.age.d": "{0} araw",

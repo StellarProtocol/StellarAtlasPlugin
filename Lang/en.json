@@ -4,6 +4,7 @@
   "at.status.syncedNone": "{0} · {1} chests on this map · nothing shown yet",
   "at.status.offline": "Offline · showing the copy from {0} ago",
   "at.status.offlineNone": "Offline · no saved copy yet",
+  "at.status.line": "Line {0}",
   "at.age.min": "{0} min",
   "at.age.h": "{0} h",
   "at.age.d": "{0} d",
