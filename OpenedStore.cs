@@ -140,11 +140,35 @@ internal sealed class OpenedStore
 
     public bool HasUuid(long uuid) => uuid != 0 && _uuids.Contains(uuid);
 
+    // Not-here entries count for CHEST points only. b976396 briefly let books into the dwell heuristic and wrote wrong "A"
+    // lines for books that were there (in-game 2026-11-25): such a line is dropped the first time its point is checked
+    // (no Version bump — the point was never hidden by it after this fix) and the file is rewritten once by FlushPruned.
+    private bool IsAbsent(AtlasPoint p)
+    {
+        if (!_absentIds.Contains(p.Id)) return false;
+        if (AtlasGroups.IsChest(p.Chip)) return true;
+        _absentIds.Remove(p.Id);
+        long id = p.Id;
+        _absent.RemoveAll(e => e.Uuid == id);
+        _pruned = true;
+        return false;
+    }
+
+    private bool _pruned;
+
+    // After a hidden-flag pass (Plugin.Absent.cs, 2 Hz): one save if non-chest "A" lines were dropped.
+    public void FlushPruned()
+    {
+        if (!_pruned) return;
+        _pruned = false;
+        if (_charId != 0) Save();
+    }
+
     // A server point of ANY scene (another map browsed on the big map): same rules, position match over that scene's
     // opened chests and read books (a short scan of this character's list — once per viewed scene, not per refresh).
     public bool MatchesIn(int scene, AtlasPoint p)
     {
-        if (_absentIds.Contains(p.Id)) return true;
+        if (IsAbsent(p)) return true;
         if (p.Uuid != 0) return _uuids.Contains(p.Uuid);
         if (!AtlasGroups.IsOneTime(p.Chip)) return false;
         foreach (var e in _all)
@@ -160,7 +184,7 @@ internal sealed class OpenedStore
     // an opened one. The scene list is tiny (chests opened here by this character), so the scan is cheap.
     public bool Matches(AtlasPoint p)
     {
-        if (_absentIds.Contains(p.Id)) return true;
+        if (IsAbsent(p)) return true;
         if (p.Uuid != 0) return _uuids.Contains(p.Uuid);
         if (!AtlasGroups.IsOneTime(p.Chip) || _scene.Count == 0) return false;
         foreach (var e in _scene)
