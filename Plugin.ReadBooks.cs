@@ -4,6 +4,7 @@ namespace Stellar.Atlas;
 //   • forced — character change, scene change, a book just read (OnLiveOpened): the ids are re-read;
 //   • the scene's point array was replaced (disk cache / server fetch): uncached CollectionTable ids are resolved and the
 //     hidden count re-logged;
+//   • a live book appeared whose CollectionTable id has no book id yet (NoteLiveBook): one chain call;
 //   • ReadBooksEvery passed: ONE Lua call that only counts the record (the ids are built only if the count moved), so a
 //     book read while nothing else happens is picked up within ~12 s.
 // A changed set bumps ReadBooks.Version, which OpenedStore.Version includes → RefreshHidden re-marks the points on its
@@ -19,6 +20,13 @@ public sealed partial class Plugin
     private int _rbLogScene = -1, _rbLogCount = -2, _rbLogHidden = -1;
 
     private void NoteReadBooksDirty() => _rbForce = true;
+
+    // Scanner: a live book appeared → resolve its CollectionTable id to a book id on the next SlowTick, so a read book
+    // that is still streamed hides (OpenedStore.LiveHidden) and NEAREST can match it to its server point by id.
+    private void NoteLiveBook(LiveEnt e)
+    {
+        if (e.Chip == Chip.Books && _readBooks.Want(e.Cfg)) _rbChainMore = true;
+    }
 
     private void ResetReadBooks()
     {
@@ -37,7 +45,11 @@ public sealed partial class Plugin
         _rbPoints = pts;
 
         bool changed = false;
-        if (newPoints || _rbChainMore) changed = _rbChainMore = _readBooks.ResolveChain(pts, _lua);
+        if (newPoints || _rbChainMore)
+        {
+            changed = _readBooks.ResolveChain(pts, _lua);
+            _rbChainMore = changed || _readBooks.Wanting;   // live ids left (or Lua refused) → again next second
+        }
         if (_rbForce || now >= _rbNextAt)
         {
             int r = _readBooks.Refresh(_lua, _rbForce);

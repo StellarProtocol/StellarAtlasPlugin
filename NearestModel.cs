@@ -8,8 +8,9 @@ namespace Stellar.Atlas;
 // into a bounded top-K, strings come from caches.
 //
 // Live merge: a live entity supersedes the server row for the same physical thing (same uuid, or — a questlog seed
-// without a uuid yet — same chip within SupersedeRadius on (x, z)) → the row shows as "Seen live" with the live
-// position. Opened chests (this character) and stale server points are never shown.
+// without a uuid yet — same chip within MergeRadius on (x, z)) → the row shows as "Seen live" with the live
+// position. Books merge the same way (tracked live since 2026-11-25), checked by book id once known. Opened chests and
+// read books (this character, OpenedStore.LiveHidden) and stale server points are never shown.
 internal sealed class NearestModel
 {
     public const int Rows = 8;
@@ -48,6 +49,9 @@ internal sealed class NearestModel
     public int BooksOnMap { get; private set; }
     public int Nearby { get; private set; }
 
+    // Book ids for the live ↔ server book merge (MergeRadius). Null = books merge by chip + radius only.
+    public ReadBooks? Books;
+
     public NearestModel(GameLua lua) => _lua = lua;
 
     public void SetPoints(AtlasPoint[] points)
@@ -68,9 +72,11 @@ internal sealed class NearestModel
         foreach (var p in _points) p.Hidden = p.Stale || opened.Matches(p);
     }
 
-    // A live entity the server doesn't know yet (no row with its uuid, no uuid-less seed of its chip within 5 m).
-    public bool IsLiveOnly(LiveEnt e) => IsLiveOnly(e.Uuid, e.Chip, e.X, e.Z);
-    public bool IsLiveOnly(long uuid, Chip chip, float x, float z) => !_pointUuids.ContainsKey(uuid) && !NearSeed(chip, x, z);
+    // A live entity the server doesn't know yet (no row with its uuid, no uuid-less seed of its chip within the merge
+    // radius — MergeRadius; `cfg` = the live config id, which only books use).
+    public bool IsLiveOnly(LiveEnt e) => IsLiveOnly(e.Uuid, e.Chip, e.X, e.Z, e.Cfg);
+    public bool IsLiveOnly(long uuid, Chip chip, float x, float z, int cfg) =>
+        !_pointUuids.ContainsKey(uuid) && !NearSeed(chip, x, z, cfg);
 
     // The server point that carries this live uuid (0 = none) — lets the guide tell two neighbouring points apart.
     public long PointIdOf(long uuid) => uuid != 0 && _pointUuids.TryGetValue(uuid, out long id) ? id : 0;
@@ -86,7 +92,7 @@ internal sealed class NearestModel
         int ln = 0, nearby = 0, liveOnlyChests = 0;
         foreach (var e in live.Values)
         {
-            if (!e.Tracked || !e.HasPos || opened.HasUuid(e.Uuid)) continue;
+            if (!e.Tracked || !e.HasPos || opened.LiveHidden(e)) continue;
             if (AtlasGroups.IsChest(e.Chip) && IsLiveOnly(e)) liveOnlyChests++;
             if ((mask & (1 << (int)e.Chip)) == 0) continue;
             nearby++;
@@ -151,22 +157,45 @@ internal sealed class NearestModel
         foreach (var l in live.Values)
         {
             if (!l.Tracked || !l.HasPos || l.Chip != p.Chip) continue;
+            float r = MergeRadius(p, l.Cfg);
+            if (r < 0f) continue;
             float dx = l.X - p.X, dz = l.Z - p.Z;
-            if (dx * dx + dz * dz <= SupersedeRadius * SupersedeRadius) return true;
+            if (dx * dx + dz * dz <= r * r) return true;
         }
         return false;
     }
 
-    // A live chest standing on a uuid-less seed is the same chest (not a second one) — chest count only.
-    private bool NearSeed(Chip chip, float x, float z)
+    // A live chest / book standing on a uuid-less seed is the same object (not a second one): the map's live-only test
+    // and the chest count.
+    private bool NearSeed(Chip chip, float x, float z, int cfg)
     {
         foreach (var p in _points)
         {
             if (p.Uuid != 0 || p.Chip != chip) continue;
+            float r = MergeRadius(p, cfg);
+            if (r < 0f) continue;
             float dx = x - p.X, dz = z - p.Z;
-            if (dx * dx + dz * dz <= SupersedeRadius * SupersedeRadius) return true;
+            if (dx * dx + dz * dz <= r * r) return true;
         }
         return false;
+    }
+
+    // Radius within which a live entity (config id `liveCfg`) and a uuid-less server point of the same chip are one object;
+    // negative = never. Books: the server row's config id is the NoteReadingBookTable id (1031004) while the live entity's
+    // is its CollectionTable id (55xxx), so they can't be compared directly. Once both book ids are known (ReadBooks.BookOf;
+    // a live one is resolved within ~1 s of appearing) a DIFFERENT book never merges (two posters on one notice board) and
+    // the SAME book merges within BookSameIdRadius (a questlog seed is a hand-placed map pin, often metres off the object).
+    // Until then: SupersedeRadius, like chests. Two dictionary lookups at most, no allocation.
+    private const float BookSameIdRadius = 25f;
+
+    private float MergeRadius(AtlasPoint p, int liveCfg)
+    {
+        if (p.Chip != Chip.Books || Books == null) return SupersedeRadius;
+        int pBook = Books.BookOf(p.ConfigId);
+        if (pBook <= 0) return SupersedeRadius;
+        int lBook = Books.BookOf(liveCfg);
+        if (lBook <= 0) return SupersedeRadius;
+        return lBook == pBook ? BookSameIdRadius : -1f;
     }
 
     // Sorted insert into a bounded top-K; returns the new length.

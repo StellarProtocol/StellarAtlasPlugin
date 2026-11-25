@@ -105,6 +105,9 @@ public sealed partial class Plugin
     {
         if (!WorldReady() || _scene <= 0) return;
         _scanner.Poll();
+        // A live book's AttrObjState just flipped (read): re-read the game's record on the next SlowTick, so the book
+        // hides within ~1 s while it is still streamed — not only once the server drops it (OnLiveOpened).
+        if (_scanner.BookFlipped) { _scanner.BookFlipped = false; NoteReadBooksDirty(); }
         TickSharingEdge();
         TickAbsent();
         if (Shown || _guide.Active) RecomputeNearest();
@@ -225,6 +228,7 @@ public sealed partial class Plugin
     // ── scanner events (2 Hz poll, main thread, O(1)) ─────────────────────────────────────────────────────────────
     private void OnLiveAppeared(LiveEnt e)
     {
+        NoteLiveBook(e);   // Plugin.ReadBooks.cs: a book's id → book id (read check + merge with its server point)
         if (SharingActive && !_opened.HasUuid(e.Uuid)) _reports.Enqueue(_scene, e);
     }
 

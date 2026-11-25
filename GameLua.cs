@@ -150,14 +150,16 @@ internal sealed class GameLua
     {
         if (configId <= 0) return default;
         if (_cfg.TryGetValue(configId, out var info)) return info;
-        bool withLife = !AtlasGroups.IsChestId(configId, -1);
+        bool withLife = !AtlasGroups.IsChestId(configId, -1) && !AtlasGroups.IsBookCfg(configId);   // books have no life row either
         if (!Call("__atlas_cfg(" + configId.ToString(CultureInfo.InvariantCulture) + (withLife ? ",true)" : ",false)")))
             return default;   // Lua not ready → not cached, retried on the next ask
         if (Lua.TryReadGlobalBool("__at_ok", out var ok) && ok)
         {
             Lua.TryReadGlobalNumber("__at_type", out var type);
             Lua.TryReadGlobalNumber("__at_life", out var life);
-            info = new CfgInfo(Lua.ReadGlobalString("__at_name") ?? "", (int)type, (int)life, true);
+            // Some book titles carry a rich-text line break ("Thoughts of the Long-Lived:<br>Some Ramblings About Life",
+            // CollectionTable 55001) — one line in a NEAREST row / map label. Once per id, cached.
+            info = new CfgInfo((Lua.ReadGlobalString("__at_name") ?? "").Replace("<br>", " "), (int)type, (int)life, true);
         }
         else info = new CfgInfo("", -1, 0, true);   // no row: Known=true so it is not re-asked
         _cfg[configId] = info;

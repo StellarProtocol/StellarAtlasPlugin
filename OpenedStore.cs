@@ -145,6 +145,12 @@ internal sealed class OpenedStore
 
     public bool HasUuid(long uuid) => uuid != 0 && _uuids.Contains(uuid);
 
+    // A live entity this character has done: opened / read here (uuid), or a book in the game's read record that the
+    // server still streams. Two lookups, no allocation (NEAREST 2 Hz + the map's live pass).
+    public bool LiveHidden(LiveEnt e) => LiveHidden(e.Uuid, e.Chip, e.Cfg);
+    public bool LiveHidden(long uuid, Chip chip, int cfg) =>
+        HasUuid(uuid) || (chip == Chip.Books && Books != null && Books.IsReadCfg(cfg));
+
     // Not-here entries count for CHEST points only. b976396 briefly let books into the dwell heuristic and wrote wrong "A"
     // lines for books that were there (in-game 2026-11-25): such a line is dropped the first time its point is checked
     // (no Version bump — the point was never hidden by it after this fix) and the file is rewritten once by FlushPruned.

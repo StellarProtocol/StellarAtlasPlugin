@@ -56,6 +56,7 @@ internal sealed partial class EntityScanner
     // Raised synchronously inside Poll (main thread). O(1) handlers only.
     public Action<LiveEnt>? Appeared;   // a NEW tracked entity with a position
     public Action<LiveEnt>? Opened;     // a tracked chest this character just opened
+    public bool BookFlipped;            // a tracked book's AttrObjState flipped this poll (the plugin clears it)
 
     public EntityScanner(IPluginServices services, GameLua lua) { _services = services; _lua = lua; }
 
@@ -175,7 +176,7 @@ internal sealed partial class EntityScanner
             int obj = ReadObjState(ent);
             if (obj != int.MinValue)
             {
-                if (e.ObjState == 0 && obj != 0) e.Flipped = true;
+                if (e.ObjState == 0 && obj != 0) { e.Flipped = true; if (e.Chip == Chip.Books) BookFlipped = true; }
                 e.ObjState = obj;
             }
         }

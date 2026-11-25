@@ -88,7 +88,7 @@ public sealed partial class Plugin : IStellarPlugin
         _client  = new AtlasClient(services, url.Length > 0 ? url : DefaultServerUrl);
         _scanner = new EntityScanner(services, _lua);
         _opened  = new OpenedStore(_client) { Books = _readBooks };
-        _model   = new NearestModel(_lua);
+        _model   = new NearestModel(_lua) { Books = _readBooks };
         _map     = new MapMarkers(services, _client);
         _ground  = new GroundProbe(services);
         _reports = new ReportQueue(_client, () => _services.Framework.TimeNow, GetInstall, SetInstall, m => _services.Log.Info(m));
