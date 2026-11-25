@@ -203,7 +203,7 @@ public sealed partial class Plugin
         return null;
     }
 
-    // Scanner: a chest this character opened (OnLiveOpened has already recorded it).
+    // Scanner: a chest this character opened or a book it read (OnLiveOpened has already recorded it).
     private void OnChestOpened(LiveEnt e)
     {
         bool wasTarget = _guide.Active && _guide.Cre == 0 && (e.Uuid == _guide.Uuid
@@ -215,11 +215,11 @@ public sealed partial class Plugin
             Label = info.Name.Length > 0 ? info.Name : _loc.T(AtlasGroups.LabelKey(e.Chip)),
             Until = _services.Framework.TimeNow + FlashSeconds,
         };
-        if (wasTarget && _guide.MarkerSet) ClearMarker("chest opened");
+        if (wasTarget && _guide.MarkerSet) ClearMarker("point opened");
         RecomputeNearest();
     }
 
-    // 1 Hz: end the flash; move the guide to the next nearest shown point if it was on the opened chest.
+    // 1 Hz: end the flash; move the guide to the next nearest shown point if it was on the opened chest / read book.
     private void TickFlash(float now)
     {
         if (!_flash.Active || now < _flash.Until) return;

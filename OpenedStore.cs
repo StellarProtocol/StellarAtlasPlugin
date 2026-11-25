@@ -141,12 +141,12 @@ internal sealed class OpenedStore
     public bool HasUuid(long uuid) => uuid != 0 && _uuids.Contains(uuid);
 
     // A server point of ANY scene (another map browsed on the big map): same rules, position match over that scene's
-    // opened chests (a short scan of this character's list — once per viewed scene, not per refresh).
+    // opened chests and read books (a short scan of this character's list — once per viewed scene, not per refresh).
     public bool MatchesIn(int scene, AtlasPoint p)
     {
         if (_absentIds.Contains(p.Id)) return true;
         if (p.Uuid != 0) return _uuids.Contains(p.Uuid);
-        if (!AtlasGroups.IsChest(p.Chip)) return false;
+        if (!AtlasGroups.IsOneTime(p.Chip)) return false;
         foreach (var e in _all)
         {
             if (e.Scene != scene) continue;
@@ -156,13 +156,13 @@ internal sealed class OpenedStore
         return false;
     }
 
-    // A server point of the current scene: opened if its uuid matches, or (uuid unknown) a chest within MatchRadius of
-    // an opened chest. The scene list is tiny (chests opened here by this character), so the scan is cheap.
+    // A server point of the current scene: opened if its uuid matches, or (uuid unknown) a chest / book within MatchRadius of
+    // an opened one. The scene list is tiny (chests opened here by this character), so the scan is cheap.
     public bool Matches(AtlasPoint p)
     {
         if (_absentIds.Contains(p.Id)) return true;
         if (p.Uuid != 0) return _uuids.Contains(p.Uuid);
-        if (!AtlasGroups.IsChest(p.Chip) || _scene.Count == 0) return false;
+        if (!AtlasGroups.IsOneTime(p.Chip) || _scene.Count == 0) return false;
         foreach (var e in _scene)
         {
             float dx = e.X - p.X, dz = e.Z - p.Z;

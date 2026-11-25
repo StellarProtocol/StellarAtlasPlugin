@@ -17,7 +17,7 @@ internal sealed class LiveEnt
     public float X, Y, Z;
     public bool HasPos;
     public int ObjState = int.MinValue;
-    public bool Flipped;                 // AttrObjState went 0 → non-zero while seen (chest being opened)
+    public bool Flipped;                 // AttrObjState went 0 → non-zero while seen (chest opened / book read)
     public float Dist = -1f;             // 3D distance to the player at the last poll (-1 = unknown)
     public int Seq;
     public int RetryAt;                  // poll seq at which an unresolved config id is retried
@@ -28,8 +28,8 @@ internal sealed class LiveEnt
 // Config id + table row resolve (Invoke + Lua) only on FIRST sight of a uuid, cached. No allocation per poll beyond a
 // LiveEnt per NEWLY seen entity (an event).
 //
-// Opened detection (validated 2026-11-23): opening a chest flips AttrObjState 0→1, then the server stops sending that
-// chest to this character (it disappears and never comes back, any line, after relog). So "objState flipped while seen
+// Opened detection (validated 2026-11-23; books share it, AtlasGroups.IsOneTime): opening a chest flips AttrObjState
+// 0→1, then the server stops sending that chest to this character (it disappears and never comes back, any line, after relog). So "objState flipped while seen
 // AND it later vanished" = opened by this character — at ANY distance (user-approved 2026-11-23); a scene change or
 // logout empties the walk through Reset(), which never reports opens. OpenedRadius is only used by the guide.
 internal sealed partial class EntityScanner
@@ -137,7 +137,7 @@ internal sealed partial class EntityScanner
                 var e = _live[u];
                 _live.Remove(u);
                 if (!e.Tracked) continue;
-                if (e.Flipped && AtlasGroups.IsChest(e.Chip)) Opened?.Invoke(e);
+                if (e.Flipped && AtlasGroups.IsOneTime(e.Chip)) Opened?.Invoke(e);
             }
             _gone.Clear();
             if (CreaturesOn || _creatures.Count > 0) EndCreatureWalk();
@@ -170,7 +170,7 @@ internal sealed partial class EntityScanner
             e.X = p.x; e.Y = p.y; e.Z = p.z; e.HasPos = true;
         }
         if (e.HasPos && HasPlayerPos) e.Dist = Vector3.Distance(new Vector3(e.X, e.Y, e.Z), PlayerPos);
-        if (AtlasGroups.IsChest(e.Chip))
+        if (AtlasGroups.IsOneTime(e.Chip))
         {
             int obj = ReadObjState(ent);
             if (obj != int.MinValue)

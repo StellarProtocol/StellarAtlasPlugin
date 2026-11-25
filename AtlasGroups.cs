@@ -47,6 +47,12 @@ internal static class AtlasGroups
 
     public static bool IsChest(Chip c) => c <= Chip.OtherChests;
 
+    // One-time per character: chests AND books. Books (CollectionTable "reading" rows 55000–55409) share the chest state
+    // machine (StatusTransition [[0,1]], IsRefresh false, state 1 = EObjStateDead): reading one flips AttrObjState 0→1 and
+    // the server then stops streaming it to that character. Every hide / opened / not-here / live-wins path uses this,
+    // never IsChest (which stays for chest counts, names and ordering).
+    public static bool IsOneTime(Chip c) => IsChest(c) || c == Chip.Books;
+
     // Fixed semantic colours (SDL §3 "Chips"). Chest rarities: silver / copper (game "Epic") / gold (game "Legendary") /
     // coral — the same colours as the map marker tiles (tools/make-map-icons.py) and chip dots (tools/icons/gen-dot-icons.py).
     public static ColorRgba Color(Chip c) => c switch
