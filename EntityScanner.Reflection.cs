@@ -13,7 +13,8 @@ namespace Stellar.Atlas;
 //   ZEntity.Model → ZModel.ModelGoComp → .Position                           — world position
 //   Panda.ZGame.EntityAttrExtensions.GetAttrObjState(ZEntity) : int          — AttrObjState=360 (NOT GetAttr<long>:
 //     int32 attrs read as long log "arr type err" every call)
-//   Bokura.Table.ITable.CurrentSceneId (static int)                          — scene id (= server scene_id)
+//   Bokura.Table.ITable.CurrentSceneId (static int)                          — the BIG MAP's browsed scene id, NOT where the
+//     player is: only a change trigger for the actual-scene read (Plugin.Tick.cs CheckScene)
 internal sealed partial class EntityScanner
 {
     private bool _apiResolved, _apiOk;
@@ -91,6 +92,7 @@ internal sealed partial class EntityScanner
         catch (Exception ex) { Warn("api resolve error: " + (ex.InnerException?.Message ?? ex.Message)); return false; }
     }
 
+    // The TABLE scene (follows the big map's browse) — a cheap change trigger only; never stamp anything with it.
     public int ReadSceneId()
     {
         int id = 0;

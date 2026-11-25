@@ -6,7 +6,8 @@ namespace Stellar.Atlas;
 // Scheduling. Everything runs off IFramework.Every, which rides the plugin Update tick (world-gated by the framework), and
 // each callback also self-gates on Phase == World && IsWorldActive && !Loading before touching the game
 // (Game-Phases-and-Tick-Gating.md; Plugin-Performance-Rules.md §3 "never bind game types before world-ready").
-//   5 Hz  character / scene id / player position / guide arrival       (three field reads + one bound pos read);
+//   5 Hz  character / table scene id (a change TRIGGER only) / player position / guide arrival (three field reads + one
+//         bound pos read; the actual scene's Lua read runs only when the table scene changed or the world came back);
 //         map markers: a re-check every 2 s, a push only when the shown set changed, ≤ 1 map rebuild per 5 s
 //         (MapMarkers.cs)
 //   2 Hz  live collection walk (always in world: opened chests must be caught while the window is closed) and, only
@@ -20,7 +21,17 @@ public sealed partial class Plugin
     private IDisposable? _tickFast, _tickScan, _tickSlow;
 
     // scene + server state
+    // _scene = the scene the player is STANDING in (Lua Z.StageMgr.GetCurrentSceneId, SessionLua), 0 = unknown. It drives
+    // everything tied to the player's position: reports, opened chests, the not-here dwell, NEAREST, the guide, the map's
+    // current scene. NOT Bokura.Table.ITable.CurrentSceneId: that one follows the scene the BIG MAP browses (in-game
+    // 2026-11-24/25) — reports filed under it put real chests/herbs/ore of the player's scene into the browsed one
+    // (production DB 2026-11-25: 98 report-created points were exact copies of points in a different scene). The map
+    // itself needs no browsed scene: its hook gets the scene id as an argument and other scenes are prestaged.
     private int _scene;
+    private int _tableScene;        // last ITable.CurrentSceneId: a cheap 5 Hz trigger for re-reading the actual scene
+    private bool _sceneVerified;    // the actual scene was read since the world became ready (scan / reports wait for it)
+    private float _sceneCheckAt = -100f;
+    private bool _browseLogged;
     private bool _fetchInFlight;
     private float _lastFetchAt = -1f;
     private AtlasClient.FetchState _fetchState = AtlasClient.FetchState.NoData;
@@ -82,13 +93,12 @@ public sealed partial class Plugin
     {
         var cs = _services.ClientState;
         if (!_warmed && cs.Phase == GamePhase.World && cs.IsWorldActive) TryWarmUp();
-        if (!WorldReady()) { NoteWorldUnstable(); return; }
+        if (!WorldReady()) { NoteWorldUnstable(); NoteSceneUnverified(); return; }
         long charId = 0;
         try { charId = _services.PlayerState.CharId; } catch { }
         if (charId != 0 && charId != _charId) OnCharacter(charId);
 
-        int scene = _scanner.ReadSceneId();
-        if (scene != _scene) OnSceneChange(scene);
+        if (!CheckScene()) return;
         if (_scene <= 0) return;
 
         _scanner.ReadPlayer();
@@ -101,9 +111,37 @@ public sealed partial class Plugin
         }
     }
 
+    // The actual scene, re-read (one constant Lua chunk) only when ITable.CurrentSceneId moved — a big-map browse OR a real
+    // scene change, the cheap field can't tell which — or when the world just became ready again (after a loading screen
+    // the table scene may not move: a teleport to the scene the big map was already browsing). Until that read succeeds
+    // (Lua not ready) nothing scene-bound runs (retried ≤ 1 Hz): a scan in between would stamp the new scene's entities
+    // with the old scene. The 1 Hz line read (Plugin.Creatures.cs ReadLine) also catches a change this trigger missed.
+    private void NoteSceneUnverified() { _sceneVerified = false; _sceneCheckAt = -100f; }   // re-read at once when ready
+
+    private bool CheckScene()
+    {
+        int table = _scanner.ReadSceneId();
+        if (table != _tableScene) { _tableScene = table; NoteSceneUnverified(); }
+        if (!_sceneVerified)
+        {
+            float now = _services.Framework.TimeNow;
+            if (now - _sceneCheckAt < 1f) return false;
+            _sceneCheckAt = now;
+            if (RefreshActualScene() <= 0) return false;
+            _sceneVerified = true;
+            if (!_browseLogged && table > 0 && table != _scene)
+            {
+                _browseLogged = true;   // once per session — the browse itself changes nothing here any more
+                _services.Log.Info($"[Atlas] table scene {table} ≠ actual scene {_scene} (big map browsing) — Atlas stays on scene {_scene}");
+            }
+        }
+        return true;
+    }
+
     private void ScanTick()
     {
-        if (!WorldReady() || _scene <= 0) return;
+        if (!WorldReady()) { NoteSceneUnverified(); return; }
+        if (!_sceneVerified || _scene <= 0) return;
         _scanner.Poll();
         // A live book's AttrObjState just flipped (read): re-read the game's record on the next SlowTick, so the book
         // hides within ~1 s while it is still streamed — not only once the server drops it (OnLiveOpened).
@@ -141,12 +179,10 @@ public sealed partial class Plugin
         if (_guide.Cre == 0) StopGuide(clearMarker: true); else _guide.Remark = _guide.MarkerSet || _guide.Pending;   // pending: set on arriving in its scene
         _groundCache.Clear();
         NoteWorldUnstable();
-        int prevActual = _actualScene;
+        int prev = _scene;
         _scene = scene;
-        // _scene may be the scene the big map browses, not where the player is: the creature "you are here" logic uses the
-        // actual scene, and the line (per scene) is dropped only when the ACTUAL scene changed (re-read within 1 s).
-        RefreshActualScene();
-        if (_actualScene != prevActual) _line = 0;
+        _services.Log.Info($"[Atlas] scene {prev} → {scene} (actual, Z.StageMgr)");
+        _line = 0;   // per scene: re-read within 1 s (a stale line of the old scene never shows)
         _scanner.Reset();
         _model.Clear();
         _map.OnScene(scene, _services.Framework.TimeNow);
@@ -221,15 +257,23 @@ public sealed partial class Plugin
         bool active = SharingActive;
         if (active && !_wasSharing)
             foreach (var e in _scanner.Live.Values)
-                if (e.Tracked && e.HasPos && !_opened.HasUuid(e.Uuid)) _reports.Enqueue(_scene, e);
+                if (e.Tracked && e.HasPos && !_opened.HasUuid(e.Uuid)) QueueReport(e);
         _wasSharing = active;
+    }
+
+    // The ONLY way into the report queue: stamped with the scene the player stands in, and only once that scene was read
+    // for this world entry (ReportQueue also drops scene ≤ 0). Never the big map's browsed scene (see _scene).
+    private void QueueReport(LiveEnt e)
+    {
+        if (!_sceneVerified || _scene <= 0) return;
+        _reports.Enqueue(_scene, e);
     }
 
     // ── scanner events (2 Hz poll, main thread, O(1)) ─────────────────────────────────────────────────────────────
     private void OnLiveAppeared(LiveEnt e)
     {
         NoteLiveBook(e);   // Plugin.ReadBooks.cs: a book's id → book id (read check + merge with its server point)
-        if (SharingActive && !_opened.HasUuid(e.Uuid)) _reports.Enqueue(_scene, e);
+        if (SharingActive && !_opened.HasUuid(e.Uuid)) QueueReport(e);
     }
 
     private void OnLiveOpened(LiveEnt e)

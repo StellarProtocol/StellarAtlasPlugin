@@ -159,6 +159,8 @@ public sealed partial class Plugin : IStellarPlugin
         OnCreaturesLogout();
         _map.OnLogout();
         _scene = 0;
+        _tableScene = 0;
+        _sceneVerified = false;
         _charId = 0;
         SetMask(AtlasGroups.DefaultMask, "logout");
     }
@@ -219,6 +221,8 @@ public sealed partial class Plugin : IStellarPlugin
             _maskByChar[charId] = _mask;
         }
         _opened.SetCharacter(charId);
+        if (_opened.PrunedOnLoad > 0)
+            _services.Log.Info($"[Atlas] opened file upgraded: dropped {_opened.PrunedOnLoad} \"not here\" entries (may have used the big map's browsed scene; re-learned by standing near)");
         ResetReadBooks();   // another character = another read record
         RecomputeNearest();
     }

@@ -20,6 +20,16 @@ internal sealed class OpenedStore
 {
     private const float MatchRadius = 3f;
 
+    // File format marker, the first line "V <n>" (older builds skip it: fewer than 4 fields). v2 (2026-11-25,
+    // fix/actual-scene): every "A" line written before it may be wrong — the not-here dwell compared the player's
+    // position with the points of the scene the BIG MAP was browsing (ITable.CurrentSceneId), so real chests of that scene
+    // were hidden. A file below v2 drops ALL its "A" lines once (the 2 s dwell re-earns the true ones) and is rewritten with
+    // the marker; opened-chest uuid lines are kept (matched by uuid, so a wrong scene stamp hides nothing extra).
+    private const int FormatVersion = 2;
+
+    // "A" lines dropped by the last SetCharacter's format upgrade (the plugin logs it once).
+    public int PrunedOnLoad { get; private set; }
+
     private struct Entry { public int Scene; public long Uuid; public float X, Z; }
 
     private readonly AtlasClient _io;
@@ -47,11 +57,14 @@ internal sealed class OpenedStore
         if (charId == _charId) return;
         _charId = charId;
         _all.Clear(); _uuids.Clear(); _absent.Clear(); _absentIds.Clear();
+        PrunedOnLoad = 0;
+        int ver = 1;
         if (charId != 0 && _io.ReadFile(FileName(charId)) is { } bytes)
         {
             foreach (var line in Encoding.UTF8.GetString(bytes).Split('\n'))
             {
                 var p = line.Trim().Split(' ');
+                if (p.Length == 2 && p[0] == "V") { int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out ver); continue; }
                 bool absent = p.Length >= 5 && p[0] == "A";
                 if (absent) p = p[1..];
                 if (p.Length < 4) continue;
@@ -62,6 +75,12 @@ internal sealed class OpenedStore
                 if (absent) { _absent.Add(new Entry { Scene = s, Uuid = u, X = x, Z = z }); _absentIds.Add(u); continue; }
                 _all.Add(new Entry { Scene = s, Uuid = u, X = x, Z = z });
                 _uuids.Add(u);
+            }
+            if (ver < FormatVersion && _absent.Count > 0)
+            {
+                PrunedOnLoad = _absent.Count;
+                _absent.Clear(); _absentIds.Clear();
+                Save();   // once: the rewritten file carries the marker
             }
         }
         RebuildScene();
@@ -132,7 +151,8 @@ internal sealed class OpenedStore
 
     private void Save()
     {
-        var sb = new StringBuilder((_all.Count + _absent.Count) * 34);
+        var sb = new StringBuilder((_all.Count + _absent.Count) * 34 + 8);
+        sb.Append("V ").Append(FormatVersion.ToString(CultureInfo.InvariantCulture)).Append('\n');
         foreach (var a in _all) Line(sb, "", a);
         foreach (var a in _absent) Line(sb, "A ", a);
         _io.WriteFileAsync(FileName(_charId), Encoding.UTF8.GetBytes(sb.ToString()));

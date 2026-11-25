@@ -56,6 +56,8 @@ internal sealed class ReportQueue
     // NoteReadingBookTable ids (1031xxx), so it would reject every book report ("config id not allowed for group",
     // StellarAtlasServer internal/store/report.go configAllowed), and even if allowed, match.Find skips a candidate with
     // a different config id (internal/match/match.go:49) → a duplicate point next to each seed.
+    // `scene` must be the scene the player STANDS in (Plugin.Tick.cs QueueReport) — never ITable.CurrentSceneId, which
+    // follows the big map's browse and once filed real finds under the browsed scene (production DB 2026-11-25).
     public void Enqueue(int scene, LiveEnt e)
     {
         if (_stopped || scene <= 0 || !e.Tracked || !e.HasPos || e.Uuid == 0 || e.Chip == Chip.Books) return;

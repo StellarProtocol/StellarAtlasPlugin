@@ -92,7 +92,7 @@ public sealed partial class Plugin
             return _statusText;
         _stKind = kind; _stChests = chests; _stNearby = nearby; _stAge = age; _stNone = none; _stLine = _line; _statusKey = "ok";
         // Line N rides inside the map-name argument: one text, so no layout jump, and the existing keys stay unchanged.
-        string place = _line > 0 && _scene == ActualScene && _sceneName.Length > 0 ? _sceneName + " · " + _loc.TFormat("at.status.line", _line) : _sceneName;
+        string place = _line > 0 && _sceneName.Length > 0 ? _sceneName + " · " + _loc.TFormat("at.status.line", _line) : _sceneName;
         _statusText = kind switch
         {
             HeadKind.Offline     => _loc.TFormat("at.status.offline", AgeText(age)),
