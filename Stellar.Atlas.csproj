@@ -10,7 +10,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>Stellar.Atlas</RootNamespace>
     <AssemblyName>Stellar.Atlas</AssemblyName>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <Description>Chest and resource finder. Atlas is a shared map: while it runs, the chests, resources and magical creatures you find (what and where) are shared with the Atlas server. No names, UIDs or chat are sent.</Description>
     <Deterministic>true</Deterministic>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
