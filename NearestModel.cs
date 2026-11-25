@@ -37,7 +37,7 @@ internal sealed class NearestModel
     public int Version { get; private set; }     // bumps when the visible rows change (UI re-reads cheaply)
 
     private AtlasPoint[] _points = Array.Empty<AtlasPoint>();
-    private readonly HashSet<long> _pointUuids = new();
+    private readonly Dictionary<long, long> _pointUuids = new();   // uuid → server point id
     private readonly AtlasPoint?[] _sp = new AtlasPoint?[MaxCand];
     private readonly float[] _sd = new float[MaxCand];
     private readonly LiveEnt?[] _lp = new LiveEnt?[MaxCand];
@@ -54,7 +54,7 @@ internal sealed class NearestModel
     {
         _points = points;
         _pointUuids.Clear();
-        foreach (var p in points) if (p.Uuid != 0) _pointUuids.Add(p.Uuid);
+        foreach (var p in points) if (p.Uuid != 0) _pointUuids[p.Uuid] = p.Id;
         _openedVersion = -1;   // re-mark hidden on the next recompute
     }
 
@@ -70,7 +70,10 @@ internal sealed class NearestModel
 
     // A live entity the server doesn't know yet (no row with its uuid, no uuid-less seed of its chip within 5 m).
     public bool IsLiveOnly(LiveEnt e) => IsLiveOnly(e.Uuid, e.Chip, e.X, e.Z);
-    public bool IsLiveOnly(long uuid, Chip chip, float x, float z) => !_pointUuids.Contains(uuid) && !NearSeed(chip, x, z);
+    public bool IsLiveOnly(long uuid, Chip chip, float x, float z) => !_pointUuids.ContainsKey(uuid) && !NearSeed(chip, x, z);
+
+    // The server point that carries this live uuid (0 = none) — lets the guide tell two neighbouring points apart.
+    public long PointIdOf(long uuid) => uuid != 0 && _pointUuids.TryGetValue(uuid, out long id) ? id : 0;
 
     public void Clear() { SetPoints(Array.Empty<AtlasPoint>()); Count = 0; Version++; ChestsOnMap = 0; BooksOnMap = 0; Nearby = 0; }
 
