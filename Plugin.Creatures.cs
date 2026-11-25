@@ -36,11 +36,9 @@ public sealed partial class Plugin
 
     private int CreatureMask => _mask & Creatures.AllBits;
     // Lines are per scene: "your line" only means something in Asteria Plains. Elsewhere every alive line is just "Line N".
-    // The scene the player is ACTUALLY in (Lua Z.StageMgr, read with the line at 1 Hz and on every scene change). _scene
-    // (ITable.CurrentSceneId) follows the scene the big map browses — fine for the chest list, wrong for "you are here".
-    private int _actualScene;
-    private int ActualScene => _actualScene > 0 ? _actualScene : _scene;
-    private bool InCreatureScene => ActualScene == Creatures.Scene;
+    // _scene IS the scene the player is in (Lua Z.StageMgr, read with the line at 1 Hz and on a table-scene change —
+    // Plugin.Tick.cs CheckScene), never the big map's browsed scene.
+    private bool InCreatureScene => _scene == Creatures.Scene;
     private int CreLine => InCreatureScene ? _line : 0;
     private bool CreaturesShown => CreatureMask != 0;
 
@@ -96,15 +94,16 @@ public sealed partial class Plugin
         _line = line;
     }
 
-    // Scene change (Plugin.Tick.cs): refresh the actual scene at once (the line is re-read on the next 1 Hz tick, so a
-    // stale line of the old scene never shows). Logged when it differs from the table scene (big-map browse).
-    private void RefreshActualScene() { _session.ReadLine(out int actual); NoteActualScene(actual); }
+    // Table scene moved / world back (Plugin.Tick.cs CheckScene): read the actual scene now. The line of that read is
+    // dropped — OnSceneChange zeroes it and the next 1 Hz tick reads it, so a stale line of the old scene never shows.
+    // Returns the actual scene, 0 when unknown (Lua not ready).
+    private int RefreshActualScene() { _session.ReadLine(out int actual); NoteActualScene(actual); return actual; }
 
+    // The single place a scene change starts (Plugin.Tick.cs OnSceneChange): only ever from the actual scene.
     private void NoteActualScene(int actual)
     {
-        if (actual <= 0 || actual == _actualScene) return;
-        _actualScene = actual;
-        if (actual != _scene) _services.Log.Info($"[Atlas] actual scene {actual} (table scene {_scene}: big map browsing)");
+        if (actual <= 0 || actual == _scene) return;
+        OnSceneChange(actual);
     }
 
     private void FetchCreatures(float now)
@@ -221,7 +220,6 @@ public sealed partial class Plugin
     private void OnCreaturesLogout()
     {
         _line = 0;
-        _actualScene = 0;
         _serverResolved = false;
         _serverTryAt = -100f;
         _session.OnLogout();

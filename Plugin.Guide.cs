@@ -94,7 +94,7 @@ public sealed partial class Plugin
 
     // PositionShare goals carry their own scene id: a creature row guides to Asteria Plains from any map.
     private int GuideScene => _guide.Scene != 0 ? _guide.Scene : _scene;
-    private bool GuideInScene => GuideScene == ActualScene;   // never the browsed big-map scene
+    private bool GuideInScene => GuideScene == _scene;   // _scene = where the player is, never the browsed big-map scene
 
     private void SetMarker()
     {
