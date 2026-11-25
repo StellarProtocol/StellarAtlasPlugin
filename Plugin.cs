@@ -87,7 +87,7 @@ public sealed partial class Plugin : IStellarPlugin
         _lua     = new GameLua(services);
         _client  = new AtlasClient(services, url.Length > 0 ? url : DefaultServerUrl);
         _scanner = new EntityScanner(services, _lua);
-        _opened  = new OpenedStore(_client);
+        _opened  = new OpenedStore(_client) { Books = _readBooks };
         _model   = new NearestModel(_lua);
         _map     = new MapMarkers(services, _client);
         _ground  = new GroundProbe(services);
@@ -155,6 +155,7 @@ public sealed partial class Plugin : IStellarPlugin
         _scanner.Reset();
         _model.Clear();
         _lua.OnLogout();
+        ResetReadBooks();
         OnCreaturesLogout();
         _map.OnLogout();
         _scene = 0;
@@ -218,6 +219,7 @@ public sealed partial class Plugin : IStellarPlugin
             _maskByChar[charId] = _mask;
         }
         _opened.SetCharacter(charId);
+        ResetReadBooks();   // another character = another read record
         RecomputeNearest();
     }
 

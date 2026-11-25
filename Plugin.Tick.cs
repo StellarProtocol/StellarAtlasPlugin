@@ -127,6 +127,7 @@ public sealed partial class Plugin
         if (_scene > 0 && !_fetchInFlight && _lastFetchAt >= 0f && now - _lastFetchAt >= RefreshSeconds) Fetch();
         TickFlash(now);
         TickCreatures(now);
+        TickReadBooks(now);
     }
 
     private void OnSceneChange(int scene)
@@ -147,6 +148,7 @@ public sealed partial class Plugin
         _model.Clear();
         _map.OnScene(scene, _services.Framework.TimeNow);
         _opened.SetScene(scene);
+        NoteReadBooksDirty();
         _sightings.ResetSeen();
         _fetchState = AtlasClient.FetchState.NoData;
         _fetchedOnce = false;
@@ -229,6 +231,7 @@ public sealed partial class Plugin
     private void OnLiveOpened(LiveEnt e)
     {
         _opened.Add(_scene, e.Uuid, e.X, e.Z);
+        if (e.Chip == Chip.Books) NoteReadBooksDirty();   // re-read the game's read record now, not in ~12 s
         OnChestOpened(e);   // Plugin.Guide.cs: the 2d flash + guide moves on
     }
 }

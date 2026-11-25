@@ -54,6 +54,39 @@ internal sealed class GameLua
         " end" +
         " rawset(_G,'__at_cfgs', table.concat(out, '\\n'))" +
         " end)" +
+        // Books this character has read = the game's own per-character record, keys of
+        // Z.ContainerMgr.CharSerialize.handbookData.unlockNoteReadingBookMap (non-nil = read: HandbookVM.IsUnlock,
+        // ui/view_model/handbook_vm.lua:76). The container keeps its entries in .__data__ (zcontainer/handbook_data.lua:79,
+        // 339–346). Keyed by NoteReadingBookTable id. __at_rn = count (-1 = not readable yet); the ids are joined into
+        // __at_rids ONLY when the count differs from `last`, so the slow re-check costs one number readback.
+        " rawset(_G,'__atlas_readbooks',function(last)" +
+        " rawset(_G,'__at_rn',-1) rawset(_G,'__at_rids',nil)" +
+        " pcall(function()" +
+        "  local m = Z.ContainerMgr.CharSerialize.handbookData.unlockNoteReadingBookMap" +
+        "  local d = m.__data__ or m" +
+        "  local n = 0 for _ in pairs(d) do n = n + 1 end" +
+        "  if n ~= last then local out = {} for k in pairs(d) do out[#out + 1] = tostring(k) end rawset(_G,'__at_rids', table.concat(out, ',')) end" +
+        "  rawset(_G,'__at_rn', n)" +
+        " end)" +
+        " end)" +
+        // CollectionTable id of a book → NoteReadingBookTable id: row.AwardId[1] (an array: map_info_right_view.lua:337
+        // passes it to GetAllAwardPreListByIds) → AwardTable row (awardpreview_vm.lua:87) GroupContent[1][1] = the item id
+        // (life_profession_cast_main_view.lua:723), e.g. 55018 → award 33000190 → 1031019. "id:book" pairs in __at_bks
+        // (book 0 = no chain).
+        " rawset(_G,'__atlas_bookof',function(...)" +
+        " local out, args = {}, {...}" +
+        " for i = 1, #args do local id, bk = args[i], 0" +
+        "  pcall(function()" +
+        "   local row = Z.TableMgr.GetRow(\"CollectionTableMgr\", id)" +
+        "   local aw = row and row.AwardId and row.AwardId[1]" +
+        "   local ar = aw and Z.TableMgr.GetTable(\"AwardTableMgr\").GetRow(aw)" +
+        "   local g = ar and ar.GroupContent and ar.GroupContent[1]" +
+        "   if g and g[1] then bk = g[1] end" +
+        "  end)" +
+        "  out[#out + 1] = id .. ':' .. tostring(bk)" +
+        " end" +
+        " rawset(_G,'__at_bks', table.concat(out, ','))" +
+        " end)" +
         " rawset(_G,'__atlas_scene',function(id)" +
         " rawset(_G,'__at_scene',nil)" +
         " pcall(function()" +
@@ -158,6 +191,38 @@ internal sealed class GameLua
             got++;
         }
         return got;
+    }
+
+    // Read-book record: returns the count (-1 = Lua / CharSerialize not ready). `ids` is the comma-joined id list, set
+    // only when the count differs from `lastCount` (pass -1 to force it). Event / slow cadence only (Plugin.ReadBooks.cs).
+    public int ReadBooks(int lastCount, out string? ids)
+    {
+        ids = null;
+        if (!Call("__atlas_readbooks(" + lastCount.ToString(CultureInfo.InvariantCulture) + ")")
+            || !Lua.TryReadGlobalNumber("__at_rn", out double n) || n < 0) return -1;
+        if ((int)n != lastCount) ids = Lua.ReadGlobalString("__at_rids") ?? "";
+        return (int)n;
+    }
+
+    // CollectionTable ids → NoteReadingBookTable ids in ONE call, written into `into` (0 = no chain; misses cached too).
+    // False when Lua isn't ready (nothing written → asked again later).
+    public bool BookIds(List<int> cfgs, Dictionary<int, int> into)
+    {
+        if (cfgs.Count == 0) return true;
+        var sb = new System.Text.StringBuilder("rawset(_G,'__at_bks',nil) __atlas_bookof(");
+        for (int i = 0; i < cfgs.Count; i++) { if (i > 0) sb.Append(','); sb.Append(cfgs[i].ToString(CultureInfo.InvariantCulture)); }
+        if (!Call(sb.Append(')').ToString())) return false;
+        var text = Lua.ReadGlobalString("__at_bks");
+        if (text == null) return false;
+        foreach (var pair in text.Split(','))
+        {
+            int c = pair.IndexOf(':');
+            if (c <= 0 || !int.TryParse(pair.Substring(0, c), NumberStyles.Integer, CultureInfo.InvariantCulture, out int id)) continue;
+            double.TryParse(pair.Substring(c + 1), NumberStyles.Float, CultureInfo.InvariantCulture, out double bk);
+            into[id] = (int)bk;
+        }
+        foreach (int id in cfgs) into.TryAdd(id, 0);   // a garbled reply must not make it re-ask forever
+        return true;
     }
 
     public string SceneName(int sceneId)

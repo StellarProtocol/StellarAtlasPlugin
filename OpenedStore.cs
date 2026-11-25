@@ -33,7 +33,12 @@ internal sealed class OpenedStore
 
     public OpenedStore(AtlasClient io) => _io = io;
 
-    public int Version { get; private set; }   // bumps on any change (cheap "recount" trigger)
+    // Books this character has read (the game's own record, ReadBooks.cs): hidden through the same Matches path.
+    public ReadBooks? Books;
+
+    private int _ver;
+    // Bumps on any change (cheap "recount" trigger) — of this store OR of the read-book set (both only ever increase).
+    public int Version => _ver + (Books?.Version ?? 0);
 
     private static string FileName(long charId) => "opened/" + charId.ToString(CultureInfo.InvariantCulture) + ".txt";
 
@@ -68,7 +73,7 @@ internal sealed class OpenedStore
     {
         _scene.Clear();
         foreach (var e in _all) if (e.Scene == _sceneId) _scene.Add(e);
-        Version++;
+        _ver++;
     }
 
     public void Add(int scene, long uuid, float x, float z)
@@ -77,7 +82,7 @@ internal sealed class OpenedStore
         var e = new Entry { Scene = scene, Uuid = uuid, X = x, Z = z };
         _all.Add(e);
         if (scene == _sceneId) _scene.Add(e);
-        Version++;
+        _ver++;
         Save();
     }
 
@@ -85,7 +90,7 @@ internal sealed class OpenedStore
     {
         if (_charId == 0 || pointId == 0 || !_absentIds.Add(pointId)) return;
         _absent.Add(new Entry { Scene = scene, Uuid = pointId, X = x, Z = z });
-        Version++;
+        _ver++;
         Save();
     }
 
@@ -95,7 +100,7 @@ internal sealed class OpenedStore
         if (!_uuids.Remove(uuid)) return false;
         _all.RemoveAll(e => e.Uuid == uuid);
         _scene.RemoveAll(e => e.Uuid == uuid);
-        Version++;
+        _ver++;
         Save();
         return true;
     }
@@ -115,7 +120,7 @@ internal sealed class OpenedStore
             removed.Add(e.Uuid);
         }
         if (removed.Count == before) return;
-        Version++;
+        _ver++;
         Save();
     }
 
@@ -168,7 +173,7 @@ internal sealed class OpenedStore
     // opened chests and read books (a short scan of this character's list — once per viewed scene, not per refresh).
     public bool MatchesIn(int scene, AtlasPoint p)
     {
-        if (IsAbsent(p)) return true;
+        if (IsAbsent(p) || (Books != null && Books.IsRead(p))) return true;
         if (p.Uuid != 0) return _uuids.Contains(p.Uuid);
         if (!AtlasGroups.IsOneTime(p.Chip)) return false;
         foreach (var e in _all)
@@ -184,7 +189,7 @@ internal sealed class OpenedStore
     // an opened one. The scene list is tiny (chests opened here by this character), so the scan is cheap.
     public bool Matches(AtlasPoint p)
     {
-        if (IsAbsent(p)) return true;
+        if (IsAbsent(p) || (Books != null && Books.IsRead(p))) return true;
         if (p.Uuid != 0) return _uuids.Contains(p.Uuid);
         if (!AtlasGroups.IsOneTime(p.Chip) || _scene.Count == 0) return false;
         foreach (var e in _scene)
