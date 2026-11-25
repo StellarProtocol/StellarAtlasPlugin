@@ -51,7 +51,7 @@
   "at.cre.tag.live": "Seen live",
   "at.cre.tag.here": "On your line",
   "at.cre.tag.line": "Line {0}",
-  "at.cre.tag.lines": "Lines {0}",
+  "at.cre.tag.lineCount": "On {0} lines",
   "at.cre.tag.absent": "Absent",
   "at.cre.tag.player": "Seen by a player",
   "at.cre.hp": "HP {0}%",

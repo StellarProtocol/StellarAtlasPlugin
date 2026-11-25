@@ -51,7 +51,7 @@
   "at.cre.tag.live": "Nakita mismo",
   "at.cre.tag.here": "Nasa line mo",
   "at.cre.tag.line": "Line {0}",
-  "at.cre.tag.lines": "Mga line {0}",
+  "at.cre.tag.lineCount": "Nasa {0} na line",
   "at.cre.tag.absent": "Wala",
   "at.cre.tag.player": "Nakita ng player",
   "at.cre.hp": "HP {0}%",

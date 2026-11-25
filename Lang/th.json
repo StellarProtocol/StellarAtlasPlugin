@@ -51,7 +51,7 @@
   "at.cre.tag.live": "เห็นจริง",
   "at.cre.tag.here": "อยู่ในไลน์ของคุณ",
   "at.cre.tag.line": "ไลน์ {0}",
-  "at.cre.tag.lines": "ไลน์ {0}",
+  "at.cre.tag.lineCount": "{0} ไลน์",
   "at.cre.tag.absent": "ไม่อยู่",
   "at.cre.tag.player": "ผู้เล่นพบเห็น",
   "at.cre.hp": "HP {0}%",
