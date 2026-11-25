@@ -61,7 +61,7 @@ public sealed partial class Plugin
     {
         _guide = new GuideState
         {
-            Active = true, Uuid = r.Uuid, ServerId = r.ServerId, Chip = r.Chip,
+            Active = true, Uuid = r.Uuid, ServerId = r.ServerId != 0 ? r.ServerId : _model.PointIdOf(r.Uuid), Chip = r.Chip,
             X = r.X, Y = r.Y, Z = r.Z, HasY = r.HasY,
         };
         if (!_guide.HasY) TryGroundHeight(_services.Framework.TimeNow);
@@ -141,11 +141,21 @@ public sealed partial class Plugin
     {
         if (!_guide.Active || _guide.Arrived) return false;
         if (_guide.Cre != 0) return false;   // a creature is guided, not a point
-        if (r.Uuid != 0 && r.Uuid == _guide.Uuid) return true;
-        if (r.ServerId != 0 && r.ServerId == _guide.ServerId) return true;
-        if (r.Chip != _guide.Chip) return false;
-        float dx = r.X - _guide.X, dz = r.Z - _guide.Z;
-        return dx * dx + dz * dz <= SameRadius * SameRadius;
+        return IsGuideTarget(r.Uuid, r.ServerId, r.Chip, r.X, r.Z);
+    }
+
+    // Is (uuid, server id, chip, x, z) the guided point? An id comparison decides whenever both sides have that id: equal
+    // → yes, different → NO, even within SameRadius (in-game 2026-11-25: two posters on one notice board, 48 m away, both
+    // showed as guided). Only when no id can decide (a uuid-less seed vs a live entity the server doesn't know) does the
+    // same-chip-within-SameRadius fallback apply. A live entity's server id comes from the point carrying its uuid.
+    private bool IsGuideTarget(long uuid, long serverId, Chip chip, float x, float z)
+    {
+        if (serverId == 0) serverId = _model.PointIdOf(uuid);
+        bool decided = false;
+        if (uuid != 0 && _guide.Uuid != 0) { if (uuid == _guide.Uuid) return true; decided = true; }
+        if (serverId != 0 && _guide.ServerId != 0) { if (serverId == _guide.ServerId) return true; decided = true; }
+        if (decided || chip != _guide.Chip) return false;
+        return Sq(x - _guide.X) + Sq(z - _guide.Z) <= SameRadius * SameRadius;
     }
 
     // 5 Hz: follow the target when it becomes live (exact position + height), clear on arrival.
@@ -194,20 +204,17 @@ public sealed partial class Plugin
     {
         var live = _scanner.Live;
         if (_guide.Uuid != 0) return live.TryGetValue(_guide.Uuid, out var e) && e.Tracked && e.HasPos ? e : null;
+        // no uuid yet: the guided server point's live entity — never a neighbour that belongs to ANOTHER server point
         foreach (var l in live.Values)
-        {
-            if (!l.Tracked || !l.HasPos || l.Chip != _guide.Chip) continue;
-            float dx = l.X - _guide.X, dz = l.Z - _guide.Z;
-            if (dx * dx + dz * dz <= SameRadius * SameRadius) return l;
-        }
+            if (l.Tracked && l.HasPos && IsGuideTarget(l.Uuid, 0, l.Chip, l.X, l.Z)) return l;
         return null;
     }
 
-    // Scanner: a chest this character opened (OnLiveOpened has already recorded it).
+    // Scanner: a chest this character opened or a book it read (OnLiveOpened has already recorded it).
     private void OnChestOpened(LiveEnt e)
     {
-        bool wasTarget = _guide.Active && _guide.Cre == 0 && (e.Uuid == _guide.Uuid
-                         || (e.Chip == _guide.Chip && Sq(e.X - _guide.X) + Sq(e.Z - _guide.Z) <= SameRadius * SameRadius));
+        // same id rule as the row highlight: opening the neighbouring chest / poster must not advance or clear this guide
+        bool wasTarget = _guide.Active && _guide.Cre == 0 && IsGuideTarget(e.Uuid, 0, e.Chip, e.X, e.Z);
         var info = _lua.Cfg(e.Cfg);
         _flash = new FlashState
         {
@@ -215,11 +222,11 @@ public sealed partial class Plugin
             Label = info.Name.Length > 0 ? info.Name : _loc.T(AtlasGroups.LabelKey(e.Chip)),
             Until = _services.Framework.TimeNow + FlashSeconds,
         };
-        if (wasTarget && _guide.MarkerSet) ClearMarker("chest opened");
+        if (wasTarget && _guide.MarkerSet) ClearMarker("point opened");
         RecomputeNearest();
     }
 
-    // 1 Hz: end the flash; move the guide to the next nearest shown point if it was on the opened chest.
+    // 1 Hz: end the flash; move the guide to the next nearest shown point if it was on the opened chest / read book.
     private void TickFlash(float now)
     {
         if (!_flash.Active || now < _flash.Until) return;

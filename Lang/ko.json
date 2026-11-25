@@ -51,7 +51,7 @@
   "at.cre.tag.live": "직접 확인",
   "at.cre.tag.here": "내 라인",
   "at.cre.tag.line": "라인 {0}",
-  "at.cre.tag.lines": "라인 {0}",
+  "at.cre.tag.lineCount": "{0}개 라인",
   "at.cre.tag.absent": "없음",
   "at.cre.tag.player": "플레이어 목격",
   "at.cre.hp": "HP {0}%",

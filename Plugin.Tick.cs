@@ -105,6 +105,9 @@ public sealed partial class Plugin
     {
         if (!WorldReady() || _scene <= 0) return;
         _scanner.Poll();
+        // A live book's AttrObjState just flipped (read): re-read the game's record on the next SlowTick, so the book
+        // hides within ~1 s while it is still streamed — not only once the server drops it (OnLiveOpened).
+        if (_scanner.BookFlipped) { _scanner.BookFlipped = false; NoteReadBooksDirty(); }
         TickSharingEdge();
         TickAbsent();
         if (Shown || _guide.Active) RecomputeNearest();
@@ -127,6 +130,7 @@ public sealed partial class Plugin
         if (_scene > 0 && !_fetchInFlight && _lastFetchAt >= 0f && now - _lastFetchAt >= RefreshSeconds) Fetch();
         TickFlash(now);
         TickCreatures(now);
+        TickReadBooks(now);
     }
 
     private void OnSceneChange(int scene)
@@ -147,6 +151,7 @@ public sealed partial class Plugin
         _model.Clear();
         _map.OnScene(scene, _services.Framework.TimeNow);
         _opened.SetScene(scene);
+        NoteReadBooksDirty();
         _sightings.ResetSeen();
         _fetchState = AtlasClient.FetchState.NoData;
         _fetchedOnce = false;
@@ -223,12 +228,14 @@ public sealed partial class Plugin
     // ── scanner events (2 Hz poll, main thread, O(1)) ─────────────────────────────────────────────────────────────
     private void OnLiveAppeared(LiveEnt e)
     {
+        NoteLiveBook(e);   // Plugin.ReadBooks.cs: a book's id → book id (read check + merge with its server point)
         if (SharingActive && !_opened.HasUuid(e.Uuid)) _reports.Enqueue(_scene, e);
     }
 
     private void OnLiveOpened(LiveEnt e)
     {
         _opened.Add(_scene, e.Uuid, e.X, e.Z);
+        if (e.Chip == Chip.Books) NoteReadBooksDirty();   // re-read the game's read record now, not in ~12 s
         OnChestOpened(e);   // Plugin.Guide.cs: the 2d flash + guide moves on
     }
 }

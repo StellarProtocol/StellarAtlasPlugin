@@ -7,7 +7,10 @@ namespace Stellar.Atlas;
 // it can see that nothing is there: a server CHEST point that stays within AbsentRadius (horizontal) of the player for
 // AbsentSeconds in a row with no live chest within LiveNearRadius of it (or its uuid not live) is "not here for this
 // character" → stored with the opened chests (OpenedStore "A" lines), hidden from NEAREST, the guide and the map. Local
-// only: never reported (it says nothing about other characters). Chests only.
+// only: never reported (it says nothing about other characters). CHESTS ONLY (AtlasGroups.IsChest): books were added in
+// b976396 and that was wrong (in-game 2026-11-25, Asterleeds) — books stream in much closer than 45 m, so ~20 books that
+// WERE there got hidden as "not here". Read books are hidden by the live Opened path and the game's own read record
+// (Plugin.ReadBooks.cs) instead; stale book "A" lines are ignored by OpenedStore.
 //
 // Tuning (measured in-game 2026-11-23): chests stream in up to ~136 m away, but the grid AOI drops unopened chests as
 // close as 51 m → AbsentRadius 45 m (user, 2026-11-23). Dwell AbsentSeconds 2 s from the moment the player is within
@@ -55,6 +58,7 @@ public sealed partial class Plugin
         _lastAbsX = pl.x; _lastAbsZ = pl.z; _haveLastAbs = true;
         if (now - _stableSince < StableSecs) return;
         _model.RefreshHidden(_opened);
+        _opened.FlushPruned();   // stale book "A" lines dropped by that pass → one rewrite of the file
         _nearSeq++;
         foreach (var p in _model.Points)
         {
@@ -67,7 +71,7 @@ public sealed partial class Plugin
             {
                 _nearSince.Remove(p.Id);
                 _opened.AddAbsent(_scene, p.Id, p.X, p.Z);
-                _services.Log.Info($"[Atlas] chest point {p.Id} not here for this character (scene {_scene}) — hidden");
+                _services.Log.Info($"[Atlas] point {p.Id} not here for this character (scene {_scene}) — hidden");
                 continue;
             }
             _nearSince[p.Id] = new NearMark { Since = m.Since, Seq = _nearSeq };
@@ -78,7 +82,7 @@ public sealed partial class Plugin
         _nearDrop.Clear();
     }
 
-    // Live wins: opened chests visible again, and not-here points with a live chest on them, come back at once.
+    // Live wins: opened chests visible again, and not-here points with a live one on them, come back at once.
     private void UnhideSeenLive()
     {
         bool anyAbsent = _opened.HasAbsentInScene();
@@ -86,10 +90,10 @@ public sealed partial class Plugin
         {
             if (!e.Tracked || !e.HasPos || !AtlasGroups.IsChest(e.Chip)) continue;
             if (_opened.HasUuid(e.Uuid) && _opened.RemoveOpened(e.Uuid))
-                _services.Log.Info($"[Atlas] chest {e.Uuid} seen live again — unhidden");
+                _services.Log.Info($"[Atlas] point {e.Uuid} seen live again — unhidden");
             if (!anyAbsent) continue;
             _opened.RemoveAbsentNear(e.X, e.Z, LiveNearRadius, _unhidden);
-            foreach (long id in _unhidden) _services.Log.Info($"[Atlas] chest point {id} seen live again — unhidden");
+            foreach (long id in _unhidden) _services.Log.Info($"[Atlas] point {id} seen live again — unhidden");
             _unhidden.Clear();
             anyAbsent = _opened.HasAbsentInScene();
         }

@@ -24,7 +24,7 @@ public sealed partial class Plugin
         int seenMin = r.Kind == CreatureModel.Kind.Player ? MinutesSince(r.SeenAt, nowMs) : 0;
         long sig = 17;
         sig = sig * 31 + r.Idx; sig = sig * 31 + (int)r.Kind; sig = sig * 31 + r.Line; sig = sig * 31 + r.HpPct;
-        sig = sig * 31 + RuntimeHelpers.GetHashCode(r.Lines); sig = sig * 31 + RuntimeHelpers.GetHashCode(r.Spot);
+        sig = sig * 31 + r.LineCount; sig = sig * 31 + RuntimeHelpers.GetHashCode(r.Lines); sig = sig * 31 + RuntimeHelpers.GetHashCode(r.Spot);
         sig = sig * 31 + spawnMin; sig = sig * 31 + r.NextSpawnAt; sig = sig * 31 + seenMin; sig = sig * 31 + (r.Fighting ? 1 : 0);
         if (sig == 0) sig = 1;
         if (sig != _creSig[s] || _creTag[s] == null)
@@ -49,7 +49,7 @@ public sealed partial class Plugin
                 detail = Join(r.Spot, hp);
                 break;
             case CreatureModel.Kind.Other:
-                tag = r.LineCount > 1 ? _loc.TFormat("at.cre.tag.lines", r.Lines) : _loc.TFormat("at.cre.tag.line", r.Line);
+                tag = r.LineCount > 1 ? _loc.TFormat("at.cre.tag.lineCount", r.LineCount) : _loc.TFormat("at.cre.tag.line", r.Line);
                 detail = r.LineCount > 1 ? _loc.T("at.cre.notYourLine") : Join(r.Spot, hp);
                 break;
             case CreatureModel.Kind.Player:

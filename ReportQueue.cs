@@ -51,9 +51,14 @@ internal sealed class ReportQueue
 
     public int Pending => _pending.Count;
 
+    // Books are tracked live (NEAREST, read hiding) but NOT reported (2026-11-25). A live book's config id is its
+    // CollectionTable id (55xxx); the server's "reading" group has a config allowlist filled by the questlog import with
+    // NoteReadingBookTable ids (1031xxx), so it would reject every book report ("config id not allowed for group",
+    // StellarAtlasServer internal/store/report.go configAllowed), and even if allowed, match.Find skips a candidate with
+    // a different config id (internal/match/match.go:49) → a duplicate point next to each seed.
     public void Enqueue(int scene, LiveEnt e)
     {
-        if (_stopped || scene <= 0 || !e.Tracked || !e.HasPos || e.Uuid == 0) return;
+        if (_stopped || scene <= 0 || !e.Tracked || !e.HasPos || e.Uuid == 0 || e.Chip == Chip.Books) return;
         if (!_queued.Add(e.Uuid)) return;
         if (_pending.Count >= MaxPending) _pending.RemoveAt(0);   // rare: only while the server is unreachable for long
         _pending.Add(new Obs { Scene = scene, Cfg = e.Cfg, Uuid = e.Uuid, Group = e.Group, Subtype = e.Subtype, X = e.X, Y = e.Y, Z = e.Z });

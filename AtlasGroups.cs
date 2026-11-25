@@ -47,6 +47,12 @@ internal static class AtlasGroups
 
     public static bool IsChest(Chip c) => c <= Chip.OtherChests;
 
+    // One-time per character: chests AND books. Books (CollectionTable "reading" rows 55000–55409) share the chest state
+    // machine (StatusTransition [[0,1]], IsRefresh false, state 1 = EObjStateDead): reading one flips AttrObjState 0→1 and
+    // the server then stops streaming it to that character. Every hide / opened / not-here / live-wins path uses this,
+    // never IsChest (which stays for chest counts, names and ordering).
+    public static bool IsOneTime(Chip c) => IsChest(c) || c == Chip.Books;
+
     // Fixed semantic colours (SDL §3 "Chips"). Chest rarities: silver / copper (game "Epic") / gold (game "Legendary") /
     // coral — the same colours as the map marker tiles (tools/make-map-icons.py) and chip dots (tools/icons/gen-dot-icons.py).
     public static ColorRgba Color(Chip c) => c switch
@@ -88,7 +94,7 @@ internal static class AtlasGroups
         GHerb       => Chip.Herbs,
         GOre        => Chip.Ore,
         GFishing    => Chip.Fishing,
-        "reading" or "engram" or "resonance" => Chip.Books,
+        GReading or "engram" or "resonance" => Chip.Books,
         _           => Chip.Hidden,
     };
 
@@ -124,6 +130,18 @@ internal static class AtlasGroups
     // questlog fishing *spots*, so they report subtype "fish" and never merge into a questlog spot.
     public static bool IsFishNode(int cfg) => cfg == 20000013 || cfg == 20000014;
 
+    // Books (reading collectibles): CollectionTable block 55000–55999. In release_4.7 every row of that block is a book
+    // (385 rows 55000–55417, all Remark 可收集阅读物, Type 0, InteractionTemplate 1006) and no other row lives in it. The
+    // live game has newer books than the dump, so the whole block counts, not the dump's last id. The table row exposes
+    // no "is a book" field the scanner already reads (GameLua.Cfg returns Name / Type), so: block + Type 0.
+    // `IsBookCfg` is the range-only test for callers without a row (GameLua skips the LifeCollectListTable ask for it).
+    public const int BookCfgMin = 55000, BookCfgMax = 55999;
+    public static bool IsBookCfg(int cfg) => cfg >= BookCfgMin && cfg <= BookCfgMax;
+    public static bool IsBookId(int cfg, int type) => type == 0 && IsBookCfg(cfg);
+
+    // Server group + subtype of books (StellarAtlasServer questlog mapping "reading-material" → reading/book).
+    public const string GReading = "reading", SubBook = "book";
+
     // A live collection → (group, subtype, chip), or false when Atlas doesn't track it. `lifeProId` = LifeCollectListTable
     // row (0 = none): 101 botany, 102 mining (common ore), 103 gem/stone ore.
     public static bool ClassifyLive(int cfg, int type, int lifeProId, out string group, out string subtype, out Chip chip)
@@ -133,6 +151,7 @@ internal static class AtlasGroups
             group = GChest; subtype = ChestSubtype(cfg); chip = FromServer(group, subtype);
             return true;
         }
+        if (IsBookId(cfg, type)) { group = GReading; subtype = SubBook; chip = Chip.Books; return true; }
         if (IsFishNode(cfg)) { group = GFishing; subtype = "fish"; chip = Chip.Fishing; return true; }
         if (lifeProId == 101) { group = GHerb; subtype = "botany"; chip = Chip.Herbs; return true; }
         if (lifeProId == 102) { group = GOre; subtype = "mineral"; chip = Chip.Ore; return true; }

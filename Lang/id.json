@@ -51,7 +51,7 @@
   "at.cre.tag.live": "Terlihat",
   "at.cre.tag.here": "Di line kamu",
   "at.cre.tag.line": "Line {0}",
-  "at.cre.tag.lines": "Line {0}",
+  "at.cre.tag.lineCount": "Di {0} line",
   "at.cre.tag.absent": "Tidak ada",
   "at.cre.tag.player": "Dilihat pemain",
   "at.cre.hp": "HP {0}%",

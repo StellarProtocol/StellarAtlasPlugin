@@ -122,6 +122,7 @@ internal sealed partial class MapMarkers
         public Chip Chip;
         public float X, Y, Z;
         public string Name;
+        public int Cfg;   // live-only finds: the live config id (books: merge by book id + read check); 0 otherwise
     }
 
     private readonly IPluginServices _services;
@@ -305,7 +306,7 @@ internal sealed partial class MapMarkers
             if (!e.Tracked || !e.HasPos || _sticky.ContainsKey(e.Uuid) || !model.IsLiveOnly(e)) continue;
             if (!_liveIds.TryGetValue(e.Uuid, out long id)) { id = LiveIdBase + ++_liveNext; _liveIds[e.Uuid] = id; }
             string name = model.LiveName(e);
-            _sticky[e.Uuid] = new Entry { N = id, Chip = e.Chip, X = e.X, Y = e.Y, Z = e.Z, Name = name.Length > 0 ? name : ChipName(e.Chip) };
+            _sticky[e.Uuid] = new Entry { N = id, Chip = e.Chip, X = e.X, Y = e.Y, Z = e.Z, Name = name.Length > 0 ? name : ChipName(e.Chip), Cfg = e.Cfg };
         }
 
         _cands.Clear();
@@ -316,7 +317,7 @@ internal sealed partial class MapMarkers
         foreach (var kv in _sticky)
         {
             var en = kv.Value;
-            if ((mask & (1 << (int)en.Chip)) != 0 && model.IsLiveOnly(kv.Key, en.Chip, en.X, en.Z))
+            if ((mask & (1 << (int)en.Chip)) != 0 && model.IsLiveOnly(kv.Key, en.Chip, en.X, en.Z, en.Cfg))
                 _cands.Add(kv);   // boxed KeyValuePair: only live-only finds, a handful per scene
         }
 
@@ -342,7 +343,7 @@ internal sealed partial class MapMarkers
             var c = _cands[_idx[k]];
             long nId; Chip chip; bool hidden;
             if (c is AtlasPoint p) { nId = p.Id; chip = p.Chip; hidden = p.Hidden; }
-            else { var kv = (KeyValuePair<long, Entry>)c; nId = kv.Value.N; chip = kv.Value.Chip; hidden = opened.HasUuid(kv.Key); }
+            else { var kv = (KeyValuePair<long, Entry>)c; nId = kv.Value.N; chip = kv.Value.Chip; hidden = opened.LiveHidden(kv.Key, chip, kv.Value.Cfg); }
             if (nId <= 0 || nId >= MaxN) continue;   // keeps Id at 14 digits and Uid (900000000 + n) inside int32
             sigAll = (sigAll ^ (ulong)nId) * 1099511628211UL;
             sigAll = (sigAll ^ (ulong)chip) * 1099511628211UL;

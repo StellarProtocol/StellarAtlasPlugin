@@ -51,7 +51,7 @@
   "at.cre.tag.live": "目視確認",
   "at.cre.tag.here": "あなたのライン",
   "at.cre.tag.line": "ライン {0}",
-  "at.cre.tag.lines": "ライン {0}",
+  "at.cre.tag.lineCount": "{0}ライン",
   "at.cre.tag.absent": "不在",
   "at.cre.tag.player": "プレイヤーが目撃",
   "at.cre.hp": "HP {0}%",
