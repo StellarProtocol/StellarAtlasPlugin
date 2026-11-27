@@ -41,7 +41,10 @@ internal sealed partial class MapMarkers
     private Color32[]? _glyphPx;
     private int _glyphW, _glyphH, _glyphCell, _creSize;
     private readonly int[] _glyphX0 = new int[Glyphs.Length], _glyphX1 = new int[Glyphs.Length];
-    private bool _creFailed;
+    private bool _creFailed;                              // art missing: sticky (nothing to compose with)
+    // Tile keys whose compose THREW. Skipped per key only, so one bad tile (2026-11-28: a narrow "1" badge pill tripped
+    // Math.Clamp min > max) can no longer blank every other creature with the game's placeholder.
+    private readonly HashSet<string> _creBadKeys = new();
 
     // Select / prestage build of scene 7: the published creature flags after the chest entries (outside MapCap).
     private void AppendCreatures(int scene, List<Entry> job, ref ulong sig, ref ulong sigAll)
@@ -72,7 +75,7 @@ internal sealed partial class MapMarkers
         int px = TilePx();
         if (px != _creSize) { DestroyCreatureSprites(); _creSize = px; }
         if (_creSprites.TryGetValue(t.Key, out var s) && s != null) return s;
-        if (_creFailed || _createdThisPass) return null;
+        if (_creFailed || _createdThisPass || _creBadKeys.Contains(t.Key)) return null;
         _createdThisPass = true;
         long t0 = Stopwatch.GetTimestamp();
         try
@@ -95,7 +98,11 @@ internal sealed partial class MapMarkers
             if (!_creLogged) { _creLogged = true; _services.Log.Info($"[Atlas] creature map tile composed ({px} px, badge '{t.Badge}')"); }
             return s;
         }
-        catch (Exception ex) { CreFail("creature tile compose failed: " + ex.Message); return null; }
+        catch (Exception ex)
+        {
+            if (_creBadKeys.Add(t.Key)) _services.Log.Warning("[Atlas] creature tile compose failed for '" + t.Key + "': " + ex.Message + " — that tile keeps the game's placeholder");
+            return null;
+        }
         finally { Slow("creature tile compose", t0); }
     }
     private bool _creLogged;
@@ -175,13 +182,14 @@ internal sealed partial class MapMarkers
             len = TextWidth(text, cut) + 1 + Adv(12);   // kept entries + "+"
         }
         int pw = len + 2 * padX, ph = _glyphH + 2 * padY;
+        pw = Math.Max(pw, ph);   // a one-glyph badge ("1") is narrower than tall: keep it a circle, not a pill thinner than 2r
         int x0 = time ? (px - pw) / 2 : px - pw - 1, y0 = 0;
         float r = time ? MathF.Max(2f, ph / 3f) : ph / 2f;
         var fill = time ? new Color32(26, 20, 30, 255) : here ? new Color32(0x2f, 0x7d, 0x4e, 255) : new Color32(0x2a, 0x21, 0x18, 255);
         Color32? edge = time ? null : here ? new Color32(0x5f, 0xd3, 0x8d, 255) : new Color32(0xd9, 0xcb, 0xbd, 255);
         RoundRect(buf, px, x0, y0, pw, ph, r, fill, edge);
         var ink = time ? new Color32(0xff, 0xcc, 0x73, 255) : new Color32(255, 255, 255, 255);
-        int x = x0 + padX;
+        int x = x0 + (pw - 2 * padX - len) / 2 + padX;   // centred when the pill was widened; = x0 + padX otherwise
         for (int i = 0; i < cut; i++) x += Blit(buf, px, Glyphs.IndexOf(text[i]), x, y0 + padY, ink);
         if (plus) Blit(buf, px, 12, x, y0 + padY, ink);
     }
@@ -232,6 +240,7 @@ internal sealed partial class MapMarkers
     private static float Coverage(float px, float py, float x0, float y0, float w, float h, float r)
     {
         if (w <= 0f || h <= 0f) return 0f;
+        r = MathF.Min(r, MathF.Min(w, h) * 0.5f);   // a pill narrower than 2r would make Math.Clamp min > max (throws)
         float cx = Math.Clamp(px, x0 + r, x0 + w - r), cy = Math.Clamp(py, y0 + r, y0 + h - r);
         float dx = px - cx, dy = py - cy;
         float d = MathF.Sqrt(dx * dx + dy * dy) - r;
@@ -258,6 +267,7 @@ internal sealed partial class MapMarkers
         _creSprites.Clear();
         _creTextures.Clear();
         _crePixels.Clear();
+        _creBadKeys.Clear();   // a new tile size may compose fine
         _glyphPx = null;
     }
 }
